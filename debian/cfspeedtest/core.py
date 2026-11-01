@@ -357,17 +357,23 @@ def update_core(core_type="mihomo", tag=None, log=None):
 def validate_proxy(proxy, core_type="mihomo"):
     """Raise CoreError when the active core cannot carry this proxy."""
     chosen = normalize_type(core_type)
-    if chosen != "xray":
-        return
     proxy_type = str(proxy.get("type", "")).lower()
+    network = str(proxy.get("network") or "tcp").lower()
+    if chosen == "mihomo":
+        # mihomo's XHTTP transport currently covers VLESS only.  A VMess/Trojan
+        # xhttp node must use the Xray core.
+        if network == "xhttp" and proxy_type != "vless":
+            raise CoreError(
+                "mihomo 当前仅支持 VLESS 的 xhttp；这个 %s xhttp 节点请改用 Xray 内核"
+                % (proxy_type or "未知"))
+        return
     if proxy_type not in ("vless", "vmess", "trojan", "ss"):
         raise CoreError("xray 内核不支持 %s 节点，请改用 mihomo 内核" % (proxy_type or "未知"))
     if proxy_type == "ss" and proxy.get("plugin"):
         raise CoreError("xray 内核不支持带 plugin（obfs / v2ray-plugin）的 SS 节点，请改用 mihomo")
-    network = str(proxy.get("network") or "tcp").lower()
     if network in ("h2", "http"):
         raise CoreError("Xray 26 已移除 HTTP/2 传输，请改用 mihomo 内核")
-    if network not in ("tcp", "ws", "grpc"):
+    if network not in ("tcp", "ws", "grpc", "xhttp"):
         raise CoreError("xray 内核不支持 %s 传输，请改用 mihomo 内核" % network)
 
 
@@ -404,7 +410,7 @@ def _xray_stream(proxy, force_tls=False):
     network = str(proxy.get("network") or "tcp").lower()
     if network == "h2":
         network = "http"
-    if network not in ("tcp", "ws", "grpc", "http"):
+    if network not in ("tcp", "ws", "grpc", "http", "xhttp"):
         raise CoreError("xray 不支持 %s 传输" % network)
 
     sni = (proxy.get("servername") or proxy.get("sni") or "").strip()
@@ -467,6 +473,16 @@ def _xray_stream(proxy, force_tls=False):
         if host:
             http_settings["host"] = host
         stream["httpSettings"] = http_settings
+    elif network == "xhttp":
+        xhttp = proxy.get("xhttp-opts") or {}
+        xhttp_settings = {"path": xhttp.get("path") or "/"}
+        if xhttp.get("host"):
+            xhttp_settings["host"] = xhttp["host"]
+        if xhttp.get("mode"):
+            xhttp_settings["mode"] = xhttp["mode"]
+        if xhttp.get("extra"):
+            xhttp_settings["extra"] = xhttp["extra"]
+        stream["xhttpSettings"] = xhttp_settings
     return stream
 
 

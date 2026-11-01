@@ -110,6 +110,36 @@ class Hysteria2Tests(unittest.TestCase):
         self.assertEqual(parsed.proxy["obfs-password"], "ob")
 
 
+class XhttpTests(unittest.TestCase):
+    def test_vmess_xhttp(self):
+        payload = {
+            "v": "2", "ps": "xhttp", "add": "bag.example.com", "port": 443,
+            "id": "11111111-2222-3333-4444-555555555555", "aid": "0",
+            "net": "xhttp", "type": "none", "host": "", "path": "/abc",
+            "mode": "stream-up", "tls": "tls", "sni": "sni.example.com",
+            "alpn": "h2,http/1.1",
+        }
+        parsed = links.parse_link("vmess://" + b64(json.dumps(payload)))
+        proxy = parsed.proxy
+        self.assertEqual(proxy["network"], "xhttp")
+        self.assertEqual(proxy["xhttp-opts"]["path"], "/abc")
+        self.assertEqual(proxy["xhttp-opts"]["mode"], "stream-up")
+        self.assertNotIn("host", proxy["xhttp-opts"])
+        self.assertEqual(proxy["servername"], "sni.example.com")
+        self.assertEqual(proxy["alpn"], ["h2", "http/1.1"])
+
+    def test_vless_xhttp(self):
+        parsed = links.parse_link(
+            "vless://uuid@edge.example.com:443?encryption=none&security=tls"
+            "&sni=edge.example.com&type=xhttp&host=cdn.example.com"
+            "&path=%2Fxhttp&mode=stream-up&alpn=h2%2Chttp%2F1.1#x")
+        proxy = parsed.proxy
+        self.assertEqual(proxy["network"], "xhttp")
+        self.assertEqual(proxy["xhttp-opts"],
+                         {"path": "/xhttp", "mode": "stream-up", "host": "cdn.example.com"})
+        self.assertEqual(proxy["alpn"], ["h2", "http/1.1"])
+
+
 class InvalidTests(unittest.TestCase):
     def test_unsupported(self):
         with self.assertRaises(links.LinkError):

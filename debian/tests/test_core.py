@@ -1,3 +1,5 @@
+import base64
+import json
 import socket
 import tempfile
 import unittest
@@ -113,6 +115,49 @@ class CoreConfigTests(unittest.TestCase):
         self.assertEqual(stream["network"], "ws")
         self.assertEqual(stream["wsSettings"]["path"], "/ws")
         self.assertEqual(stream["wsSettings"]["host"], "cdn.example.com")
+
+    def _vmess_xhttp_link(self):
+        payload = {
+            "v": "2", "ps": "xhttp", "add": "bag.example.com", "port": 443,
+            "id": "11111111-2222-3333-4444-555555555555", "aid": "0",
+            "net": "xhttp", "type": "none", "host": "", "path": "/abc",
+            "mode": "stream-up", "tls": "tls", "sni": "sni.example.com",
+            "alpn": "h2,http/1.1",
+        }
+        raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        return "vmess://" + raw
+
+    def test_xray_vmess_xhttp(self):
+        parsed = links.parse_link(self._vmess_xhttp_link())
+        core.validate_proxy(parsed.proxy, "xray")
+        payload = core.build_config(parsed.proxy_for_ip("1.2.3.4"), 48900, core_type="xray")
+        outbound = payload["outbounds"][0]
+        stream = outbound["streamSettings"]
+        self.assertEqual(outbound["protocol"], "vmess")
+        self.assertEqual(stream["network"], "xhttp")
+        self.assertEqual(stream["xhttpSettings"]["path"], "/abc")
+        self.assertEqual(stream["xhttpSettings"]["mode"], "stream-up")
+        self.assertEqual(stream["tlsSettings"]["serverName"], "sni.example.com")
+        self.assertEqual(stream["tlsSettings"]["alpn"], ["h2", "http/1.1"])
+
+    def test_mihomo_xhttp_restriction(self):
+        parsed = links.parse_link(self._vmess_xhttp_link())
+        with self.assertRaises(core.CoreError):
+            core.validate_proxy(parsed.proxy, "mihomo")
+        vless = links.parse_link(
+            "vless://uuid@edge.example.com:443?security=tls&sni=edge.example.com"
+            "&type=xhttp&host=cdn.example.com&path=%2Fx&mode=stream-up#x")
+        core.validate_proxy(vless.proxy, "mihomo")
+
+    def test_xray_vless_xhttp(self):
+        parsed = links.parse_link(
+            "vless://uuid@edge.example.com:443?security=tls&sni=edge.example.com"
+            "&type=xhttp&host=cdn.example.com&path=%2Fx&mode=stream-up#x")
+        payload = core.build_config(parsed.proxy_for_ip("1.2.3.4"), 48900, core_type="xray")
+        stream = payload["outbounds"][0]["streamSettings"]
+        self.assertEqual(stream["network"], "xhttp")
+        self.assertEqual(stream["xhttpSettings"],
+                         {"path": "/x", "host": "cdn.example.com", "mode": "stream-up"})
 
     def test_xray_ss_protocol_name(self):
         parsed = links.parse_link(

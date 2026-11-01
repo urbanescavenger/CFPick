@@ -98,8 +98,24 @@ def _transport(proxy, network, query):
                 opts["headers"] = {"Host": [host]}
             proxy["network"] = "http"
             proxy["http-opts"] = opts
+    elif network == "xhttp":
+        opts = {"path": _q(query, "path", default="/") or "/",
+                "mode": _q(query, "mode", default="auto") or "auto"}
+        host = _q(query, "host")
+        if host:
+            opts["host"] = host
+        extra = _q(query, "extra")
+        if extra:
+            try:
+                parsed_extra = json.loads(extra)
+                if isinstance(parsed_extra, dict) and parsed_extra:
+                    opts["extra"] = parsed_extra
+            except ValueError:
+                pass
+        proxy["network"] = "xhttp"
+        proxy["xhttp-opts"] = opts
     else:
-        # Keep the raw value; mihomo may understand newer transports (e.g. xhttp).
+        # Keep the raw value; the active core decides whether it is supported.
         proxy["network"] = network
 
 
@@ -201,6 +217,24 @@ def _parse_vmess(link):
     elif network == "grpc":
         proxy["network"] = "grpc"
         proxy["grpc-opts"] = {"grpc-service-name": str(data.get("path") or "")}
+    elif network == "xhttp":
+        opts = {
+            "path": str(data.get("path") or "/"),
+            "mode": str(data.get("mode") or "auto"),
+        }
+        host_header = str(data.get("host") or data.get("authority") or "")
+        if host_header:
+            opts["host"] = host_header
+        extra = data.get("extra")
+        if isinstance(extra, str) and extra:
+            try:
+                extra = json.loads(extra)
+            except ValueError:
+                extra = None
+        if isinstance(extra, dict) and extra:
+            opts["extra"] = extra
+        proxy["network"] = "xhttp"
+        proxy["xhttp-opts"] = opts
     elif network in ("h2", "http"):
         proxy["network"] = network
     elif network:

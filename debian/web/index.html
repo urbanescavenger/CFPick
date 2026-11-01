@@ -289,9 +289,10 @@
       </div>
       <p class="muted">
         两个内核都是独立模块，可分别安装/升级，升级互不影响，也不会中断正在运行的测速（下一次运行生效）。
-        节点兼容性：mihomo 支持 vless / vmess / trojan / ss / hysteria2 及 h2/http 等传输；
-        xray 支持 vless / vmess / trojan / ss（SS 不支持 plugin），传输限 tcp / ws / grpc，
-        不支持 hysteria2（Xray 26 也已移除 h2/http 传输）。
+        节点兼容性：mihomo 支持 vless / vmess / trojan / ss / hysteria2 及 tcp / ws / grpc /
+        h2 / http 传输，xhttp 目前仅 VLESS；xray 支持 vless / vmess / trojan / ss
+        （SS 不支持 plugin）及 tcp / ws / grpc / xhttp 传输，不支持 hysteria2
+        （Xray 26 也已移除 h2/http 传输）。VMess/Trojan 的 xhttp 节点请选 Xray。
         自定义二进制路径优先于托管内核；卡片里的「安装 / 升级」始终更新托管内核。
       </p>
       <p class="muted" id="core-message"></p>

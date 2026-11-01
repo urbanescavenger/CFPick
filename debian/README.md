@@ -18,10 +18,11 @@ Python3 标准库实现的 Web 可视化页面。
   （支持指定版本标签），升级与应用本体解耦，互不影响；CLI 为
   `cfst update-core --type mihomo|xray|all`。
 * **节点分享链接即 worker**：支持 `vless://`、`vmess://`、`trojan://`、`ss://`、
-  `hysteria2://`（含 REALITY、WS、gRPC、HTTP/2、obfs、v2ray-plugin 等常见参数）。
+  `hysteria2://`（含 REALITY、WS、gRPC、HTTP/2、XHTTP、obfs、v2ray-plugin 等常见参数）。
   每个节点是一个并行 worker，链接里的服务器地址会被候选 CF IP 替换，端口保持不变。
   当前内核为 Xray 时，hysteria2 节点和带 plugin 的 SS 节点会被跳过（Xray-core 不支持），
   其余 vless/vmess/trojan/ss 会从同一份链接解析结果转换成 Xray JSON 出站配置。
+  Xray 支持 `xhttp` 传输（vless/vmess/trojan）；mihomo 的 xhttp 目前仅覆盖 VLESS。
 * **延迟初筛 + 多探测 fail-fast**：每个 IP 探测 N 次，任意一次失败立即丢弃；全部成功才保留，
   再按 `tl` / `tll` / `tlr` 阈值过滤。
 * **真实下载实测**：所有 worker 停止探测后，逐节点串行测延迟最优的前 N 个 IP（默认 5，最多 10），
@@ -166,7 +167,7 @@ sudo cfst update-core --type all      # 两个都装
 | | mihomo | Xray-core |
 | --- | --- | --- |
 | 节点协议 | vless / vmess / trojan / ss / hysteria2 | vless / vmess / trojan / ss |
-| 传输方式 | tcp / ws / grpc / h2 / http 等 | tcp / ws / grpc（Xray 26 已移除 h2/http 传输） |
+| 传输方式 | tcp / ws / grpc / h2 / http；xhttp（仅 VLESS） | tcp / ws / grpc / xhttp（Xray 26 已移除 h2/http 传输） |
 | SS plugin（obfs / v2ray-plugin） | 支持 | 不支持（跳过） |
 | 自签证书 / allowInsecure | 支持 | Xray 26.x 已移除 `allowInsecure`，自签证书节点请用 mihomo |
 | REALITY / WS / gRPC | 支持 | 支持（WS/gRPC 在新版 Xray 中标记为 deprecated，但仍可用） |
@@ -308,6 +309,8 @@ cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
   SSR、TUIC、SOCKS 节点暂不支持（它们不能通过替换服务器地址来测 CF IP，或参数未覆盖）。
 * **切到 xray 后部分节点被跳过**：Xray-core 不支持 hysteria2、带 plugin 的 SS 节点，
   以及 Xray 26 已移除的 h2/http 传输；引擎会记录“与当前内核不兼容，跳过”，改用 mihomo 即可。
+* **节点是 VMess/Trojan + xhttp**：用 Xray 内核；mihomo 目前只支持 VLESS 的 xhttp，
+  对其它协议的 xhttp 节点会提示改用 Xray。
 * **xray 节点握手失败并提示证书**：Xray 26.x 移除了 `allowInsecure`，自签证书节点请改用
   mihomo，或给节点换有效证书。
 * **探测全部失败**：看 `/var/log/cf-speedtest/mihomo.log` 或 `xray.log`；常见原因是节点端口/协议参数错误、
