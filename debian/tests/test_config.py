@@ -12,6 +12,8 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(cfg["ip_source"], "builtin_ipv4")
         self.assertEqual(cfg["probes"], 3)
         self.assertEqual(cfg["download_count"], 5)
+        # 延迟含节点自身 RTT，默认不设上限，避免远端节点全被丢弃。
+        self.assertEqual(cfg["latency_max"], 0)
         self.assertEqual(len(cfg["ip_lists"]), 5)
         self.assertTrue(cfg["ip_lists"][0]["enabled"])
         self.assertFalse(cfg["ip_lists"][1]["enabled"])

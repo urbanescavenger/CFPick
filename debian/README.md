@@ -24,7 +24,7 @@ Python3 标准库实现的 Web 可视化页面。
   其余 vless/vmess/trojan/ss 会从同一份链接解析结果转换成 Xray JSON 出站配置。
   Xray 支持 `xhttp` 传输（vless/vmess/trojan）；mihomo 的 xhttp 目前仅覆盖 VLESS。
 * **延迟初筛 + 多探测 fail-fast**：每个 IP 探测 N 次，任意一次失败立即丢弃；全部成功才保留，
-  再按 `tl` / `tll` / `tlr` 阈值过滤。
+  再按 `tl` / `tll` / `tlr` 阈值过滤（延迟上限默认不限，见下方配置表说明）。
 * **真实下载实测**：所有 worker 停止探测后，逐节点串行测延迟最优的前 N 个 IP（默认 5，最多 10），
   用 curl `speed_download` 换算 MB/s；5 秒内不足 1 MB 的候选会被快速中止并判失败。
 * **多 worker 调度**：并发上限可配；首个 worker 完成全部候选且取得有效结果时，其余 worker
@@ -258,7 +258,7 @@ cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 | `custom_ip_file` | 空 | 自定义列表路径，支持 CIDR 与纯 IP |
 | `custom_allip` | `false` | 自定义 IPv4 CIDR 是否展开 /24 内全部地址 |
 | `ip_lists` | 5 行 | 在线 CM 源的五个过滤列表：`enabled` / `name` / `regions` / `port` |
-| `latency_max` | `200` | 平均延迟上限（ms），0 = 不限 |
+| `latency_max` | `0`（不限） | 平均延迟上限（ms），0 = 不限。延迟包含节点自身 RTT，远端节点常 >200ms，不要照搬直连阈值 |
 | `latency_min` | `40` | 平均延迟下限（ms），0 = 不限 |
 | `loss_max` | `0.2` | 丢包率上限（0–1） |
 | `probe_url` | Google 204 | 经节点 SOCKS 做 HTTP HEAD 的 URL |

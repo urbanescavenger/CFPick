@@ -25,6 +25,8 @@
 		coreTimer: 0,
 		elapsedTimer: 0,
 		chart: null,
+		// 日志读取串行化，避免切页/定时器/手动刷新并发读到同一段而重复追加。
+		logChain: Promise.resolve(),
 	};
 
 	const PHASES = {
@@ -706,7 +708,7 @@
 		cfg.ip_online_url = text('ip_online_url');
 		cfg.custom_ip_file = text('custom_ip_file');
 		cfg.custom_allip = check('custom_allip');
-		cfg.latency_max = integer('latency_max', 200, 0, 60000);
+		cfg.latency_max = integer('latency_max', 0, 0, 60000);
 		cfg.latency_min = integer('latency_min', 40, 0, 60000);
 		cfg.loss_max = number('loss_max', 0.2, 0, 1);
 		cfg.test_count = integer('test_count', 30, 1, 100000);
@@ -788,7 +790,17 @@
 	}
 
 	// ── logs ────────────────────────────────────────────────────────────
-	async function reloadLog(reset) {
+	// 切页、2 秒定时器和手动刷新可能同时发起读取；若两个请求用同一个 pos
+	// 各追加一次，日志就会出现重复行。这里把读取排成串行队列。
+	function reloadLog(reset) {
+		state.logChain = state.logChain.then(
+			() => reloadLogNow(reset),
+			() => reloadLogNow(reset)
+		);
+		return state.logChain;
+	}
+
+	async function reloadLogNow(reset) {
 		const view = $('#log-view');
 		if (!view) return;
 		if (reset) {

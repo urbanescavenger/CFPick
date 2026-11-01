@@ -200,7 +200,11 @@ class Engine:
             return 124, ""
 
     def _probe_ip(self, node, ip, tag):
-        """Return (keep, sent, recv, loss, avg_ms)."""
+        """Return (keep, sent, recv, loss, avg_ms, reason).
+
+        ``reason`` is empty when the IP is kept; otherwise it names the filter
+        that rejected it, so the log explains every ``[丢弃]``.
+        """
         port = self.ports[node["name"]]
         workdir = self._node_workdir(node)
         process = config_path = None
@@ -212,7 +216,7 @@ class Engine:
                 process, config_path = self._start_candidate_core(node, ip, tag)
             except (core.CoreError, EngineError) as exc:
                 self.log.log("核心启动失败: %s" % exc)
-                return 0, 0, 0, 1.0, 0.0
+                return 0, 0, 0, 1.0, 0.0, "核心启动失败"
 
             done = 0
             not_ready = 0
@@ -263,16 +267,21 @@ class Engine:
         loss = (sent - recv) / sent if sent else 1.0
         avg_ms = (sum(latencies) / len(latencies) * 1000.0) if latencies else 0.0
         keep = 1
+        reason = ""
         if failed or recv < self.cfg["probes"]:
             keep = 0
+            reason = "探测未全部成功（%d/%d 次）" % (recv, self.cfg["probes"])
         else:
             if self.cfg["latency_max"] > 0 and avg_ms > self.cfg["latency_max"]:
                 keep = 0
+                reason = "延迟 %.0fms > 上限 %dms" % (avg_ms, self.cfg["latency_max"])
             if self.cfg["latency_min"] > 0 and avg_ms < self.cfg["latency_min"]:
                 keep = 0
+                reason = "延迟 %.0fms < 下限 %dms" % (avg_ms, self.cfg["latency_min"])
             if loss > self.cfg["loss_max"]:
                 keep = 0
-        return keep, sent, recv, loss, avg_ms
+                reason = "丢包 %.2f > 上限 %.2f" % (loss, self.cfg["loss_max"])
+        return keep, sent, recv, loss, avg_ms, reason
 
     def _download_one(self, node, ip, tag):
         """Return speed in MB/s (0 on failure)."""
@@ -344,20 +353,35 @@ class Engine:
         if not total:
             self.log.log("worker [%s] 候选 IP 为空，跳过" % node["name"])
             return rows
+        # 记录收到有效响应的延迟，用于「阈值全灭」时给出诊断信息。
+        responded = []
+        probed = 0
         for index, ip in enumerate(ips, start=1):
             if self.stop_event.is_set():
                 self.log.log("worker [%s] 收到停止信号，跑完当前 IP 即停（已完成 %d/%d）" % (
                     node["name"], index - 1, total))
                 break
             self.log.size_guard()
-            keep, sent, recv, loss, avg = self._probe_ip(
+            probed = index
+            keep, sent, recv, loss, avg, reason = self._probe_ip(
                 node, ip, "p%d-%d" % (index, int(time.time() * 1000) % 100000))
+            if recv > 0 and avg > 0:
+                responded.append(avg)
             if keep:
                 rows.append(result.Row(ip=ip, sent=sent, recv=recv, loss=loss,
                                        latency=avg, speed=0.0))
             self.log.log("进度: 走节点测速 [%s] %d/%d (%d%%) - %s 延迟 %.2fms 丢包 %.2f [%s]" % (
                 node["name"], index, total, index * 100 // total, ip, avg, loss,
-                "保留" if keep else "丢弃"))
+                "保留" if keep else ("丢弃: %s" % reason if reason else "丢弃")))
+        if not rows and responded and probed:
+            self.log.log(
+                "worker [%s] 已测 %d 个候选全部被阈值过滤，未保留任何 IP；"
+                "探测成功者的延迟范围 %.0f–%.0fms，当前阈值：延迟上限 %s、下限 %s、丢包上限 %.2f。"
+                "若节点本身延迟较高，请到「设置」把延迟上限调大或设为 0（不限）后重测。" % (
+                    node["name"], probed, min(responded), max(responded),
+                    self.cfg["latency_max"] or "不限",
+                    self.cfg["latency_min"] or "不限",
+                    self.cfg["loss_max"]))
         return result.sort_rows(rows, "latency")
 
     # ── iterative worker ────────────────────────────────────────────────
@@ -391,14 +415,14 @@ class Engine:
                     break
                 self.log.size_guard()
                 probed.add(ip)
-                keep, sent, recv, loss, avg = self._probe_ip(
+                keep, sent, recv, loss, avg, reason = self._probe_ip(
                     node, ip, "p%d-%d-%d" % (round_no, index, int(time.time() * 1000) % 100000))
                 if keep:
                     pass_rows.append(result.Row(ip=ip, sent=sent, recv=recv, loss=loss,
                                                 latency=avg, speed=0.0))
                 self.log.log("迭代: [%s] 第 %d 轮 %d/%d (%d%%) - %s 延迟 %.2fms 丢包 %.2f [%s]" % (
                     name, round_no, index, total, index * 100 // total, ip, avg, loss,
-                    "保留" if keep else "丢弃"))
+                    "保留" if keep else ("丢弃: %s" % reason if reason else "丢弃")))
 
             if pass_rows:
                 passed_any = True

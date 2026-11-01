@@ -33,7 +33,9 @@ DEFAULT_CONFIG = {
         {"enabled": False, "name": "", "regions": [], "port": 443},
         {"enabled": False, "name": "", "regions": [], "port": 443},
     ],
-    "latency_max": 200,
+    # 延迟是 curl 经内核 SOCKS 测到的全链路 time_pretransfer，天然包含节点
+    # 自身 RTT；远端节点常常 >200ms，默认卡上限会把所有候选全部丢弃，故默认不限。
+    "latency_max": 0,
     "latency_min": 40,
     "loss_max": 0.2,
     "probe_url": "https://www.google.com/generate_204",
@@ -200,7 +202,7 @@ def normalize(data):
     cfg["custom_allip"] = _as_bool(cfg.get("custom_allip"), False)
 
     cfg["ip_lists"] = _normalize_ip_lists(data.get("ip_lists") if isinstance(data, dict) else None)
-    cfg["latency_max"] = _as_int(cfg.get("latency_max"), 200, 0, 60000)
+    cfg["latency_max"] = _as_int(cfg.get("latency_max"), 0, 0, 60000)
     cfg["latency_min"] = _as_int(cfg.get("latency_min"), 40, 0, 60000)
     cfg["loss_max"] = _as_float(cfg.get("loss_max"), 0.2, 0.0, 1.0)
     cfg["probe_url"] = _clean_text(cfg.get("probe_url"), DEFAULT_CONFIG["probe_url"])

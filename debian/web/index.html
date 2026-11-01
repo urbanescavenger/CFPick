@@ -183,8 +183,8 @@
       <div class="card">
         <div class="card-head"><h2>延迟筛选与探测</h2></div>
         <div class="grid three">
-          <label>延迟上限 (ms) <input id="latency_max" type="number" min="0" step="1"></label>
-          <label>延迟下限 (ms) <input id="latency_min" type="number" min="0" step="1"></label>
+          <label>延迟上限 (ms，0 = 不限) <input id="latency_max" type="number" min="0" step="1"></label>
+          <label>延迟下限 (ms，0 = 不限) <input id="latency_min" type="number" min="0" step="1"></label>
           <label>丢包率上限 <input id="loss_max" type="number" min="0" max="1" step="0.01"></label>
           <label>候选 IP 数 / 节点 <input id="test_count" type="number" min="1" step="1"></label>
           <label>探测超时 (s) <input id="probe_timeout" type="number" min="1" step="1"></label>
@@ -194,7 +194,7 @@
             <input id="probe_url" type="text" spellcheck="false">
           </label>
         </div>
-        <p class="muted">任意一次探测失败该 IP 立即丢弃，只有全部探测都成功才保留。并发上限 0 表示全部节点同时运行。</p>
+        <p class="muted">任意一次探测失败该 IP 立即丢弃，只有全部探测都成功才保留。并发上限 0 表示全部节点同时运行。延迟是经节点 SOCKS 测得的全链路耗时，包含节点自身 RTT；远端节点常超过 200ms，延迟上限默认不限（0），调得太低会把所有候选全部丢弃。</p>
       </div>
 
       <div class="card">
