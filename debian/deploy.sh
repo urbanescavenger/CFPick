@@ -97,6 +97,21 @@ is_loopback() {
     esac
 }
 
+core_installed() {
+    # Ask cfst so a custom core.paths entry counts as installed too.
+    cfst cores 2>/dev/null | python3 -c '
+import json
+import sys
+
+target = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if data.get("cores", {}).get(target, {}).get("installed") else 1)
+' "$1"
+}
+
 # ── uninstall: use the installed copy when possible ─────────────────────
 if [ "$UNINSTALL" = 1 ]; then
     script=""
@@ -214,7 +229,7 @@ PY
     command -v cfst >/dev/null 2>&1 || die "cfst 未安装成功，无法安装内核"
 
     for target in $targets; do
-        if [ "$CORE_EXPLICIT" = 0 ] && [ -x "/var/lib/cf-speedtest/core/$target" ]; then
+        if [ "$CORE_EXPLICIT" = 0 ] && core_installed "$target"; then
             log "$target 内核已安装，跳过下载（用 --core $target 可强制升级）"
             continue
         fi
@@ -303,7 +318,7 @@ EOF
 
 if is_loopback "$CFG_LISTEN"; then
     cat <<EOF
-  远程访问 : ssh -N -L $CFG_PORT:127.0.0.1:$CFG_PORT root@<服务器IP>
+  远程访问 : ssh -N -L $CFG_PORT:127.0.0.1:$CFG_PORT <用户>@<服务器IP>
              然后本地浏览器打开 http://127.0.0.1:$CFG_PORT/
 EOF
 else
