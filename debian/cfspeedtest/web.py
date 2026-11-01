@@ -66,6 +66,18 @@ def _read_update_state():
         return {}
 
 
+def _tail_text(path, limit=1200):
+    """Return the last ``limit`` bytes of a log file, or '' if unreadable."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            return handle.read().decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+
+
 def _write_update_state(data):
     paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = Path(str(paths.UPDATE_STATE) + ".tmp")
@@ -664,6 +676,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if completed.returncode != 0:
             error = completed.stderr.decode("utf-8", "replace").strip()
+            tail = _tail_text(paths.UPDATE_LOG)
+            if tail:
+                lines = [line.strip() for line in tail.splitlines() if line.strip()][-6:]
+                error = "%s；更新日志: %s" % (error, " / ".join(lines))
             self._fail_app_update("systemd-run 失败: %s" % error)
             self._send_error(500, "systemd-run 失败: %s" % error)
             return

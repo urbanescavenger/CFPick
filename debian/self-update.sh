@@ -49,8 +49,20 @@ write_state 1 0 "正在拉取代码..." ""
 # Give the HTTP response that started this unit time to leave the web server.
 sleep 1
 
-trap 'write_state 0 0 "更新失败，请查看 $LOG_FILE" ""; exit 1' ERR
-trap 'write_state 0 0 "更新被中断，请查看 $LOG_FILE" ""; exit 1' INT TERM
+# Debian/Ubuntu 的 /bin/sh 是 dash，不支持 ERR 伪信号（`trap ... ERR` 会报
+# "bad trap" 并让脚本立刻退出，systemd-run 于是报 Job failed）。改用 EXIT
+# 陷阱，用 finished 区分成功，这样任意一步失败都能写回状态。
+finished=0
+on_exit() {
+    code=$?
+    if [ "$finished" -ne 1 ]; then
+        write_state 0 0 "更新失败（退出码 $code），请查看 $LOG_FILE" "" || true
+    fi
+    exit "$code"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cd "$SRC_DIR"
 export GIT_TERMINAL_PROMPT=0
@@ -62,5 +74,6 @@ write_state 1 0 "正在安装 $COMMIT..." "$COMMIT"
 
 sh debian/install.sh </dev/null
 
-write_state 0 1 "更新完成" "$COMMIT"
 echo "=== $(date '+%Y-%m-%d %H:%M:%S') update done: $COMMIT"
+write_state 0 1 "更新完成" "$COMMIT"
+finished=1
