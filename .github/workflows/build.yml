@@ -16,7 +16,9 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pin the runner: ubuntu-latest rolled to 26.04, where the deadsnakes PPA
+    # no longer ships python3.9 (the workflow needs it for po2lmo).
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
