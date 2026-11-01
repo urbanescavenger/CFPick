@@ -54,10 +54,12 @@ Python3 标准库实现的 Web 可视化页面。
 
 ### 一键部署（推荐）
 
-在目标 Debian/Ubuntu 机器上直接执行：
+在目标 Debian/Ubuntu 机器上执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh -o /tmp/cfst-deploy.sh
+sudo bash /tmp/cfst-deploy.sh
+rm -f /tmp/cfst-deploy.sh
 ```
 
 或者从仓库运行：
@@ -91,8 +93,9 @@ sudo bash debian/deploy.sh --purge
 `--core all` 安装或升级两个内核，`--core xray` 单独安装 Xray。重新执行脚本即可升级程序，
 已有 `/etc/cf-speedtest/config.json` 不会被覆盖。
 
-> 直接用 `curl | sudo bash` 前如果不放心，可以先下载到本地查看：
-> `curl -fsSLO .../debian/deploy.sh && less deploy.sh && sudo bash deploy.sh`。
+> 推荐先下载到文件再执行，既方便审查，也避免脚本与交互式 apt 共用 stdin。
+> 脚本已尽量禁用 apt/dpkg 的交互提示；如果你仍想用管道方式，脚本可以运行，
+> 但文件方式是更稳妥的默认做法。
 
 ### 手动安装
 

@@ -99,7 +99,7 @@ is_loopback() {
 
 core_installed() {
     # Ask cfst so a custom core.paths entry counts as installed too.
-    cfst cores 2>/dev/null | python3 -c '
+    cfst cores </dev/null 2>/dev/null | python3 -c '
 import json
 import sys
 
@@ -132,10 +132,19 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 
 # ── dependencies ────────────────────────────────────────────────────────
+# When this script is piped to bash (``curl ... | sudo bash``), stdin is the
+# script itself.  Any child that reads stdin (notably dpkg's conffile prompt)
+# would eat the rest of the script and cause a bogus syntax error.  Force
+# non-interactive apt and disconnect its stdin.
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export GIT_TERMINAL_PROMPT=0
 log "安装系统依赖（git / curl / ca-certificates / cron / python3）"
-apt-get update
-apt-get install -y git curl ca-certificates cron python3
+apt-get update </dev/null
+apt-get install -y \
+    -o Dpkg::Options::=--force-confdef \
+    -o Dpkg::Options::=--force-confold \
+    git curl ca-certificates cron python3 </dev/null
 
 python3 - <<'PY' || die "需要 Python 3.8+"
 import sys
@@ -143,7 +152,7 @@ raise SystemExit(0 if sys.version_info >= (3, 8) else 1)
 PY
 
 if [ "$HAS_SYSTEMD" = 1 ]; then
-    systemctl enable --now cron >/dev/null 2>&1 || \
+    systemctl enable --now cron </dev/null >/dev/null 2>&1 || \
         warn "cron 服务启动失败，定时测速可能不可用"
 fi
 
@@ -153,19 +162,19 @@ if [ -d "$SRC_DIR/.git" ]; then
     [ "$current_remote" = "$REPO" ] || \
         die "$SRC_DIR 的 origin 是 '$current_remote'，不是 '$REPO'；请用 --dir 指定其他目录"
     log "更新源码: $SRC_DIR（origin/$BRANCH）"
-    git -C "$SRC_DIR" fetch --depth 1 origin "$BRANCH"
-    git -C "$SRC_DIR" checkout -B "$BRANCH" FETCH_HEAD >/dev/null
+    git -C "$SRC_DIR" fetch --depth 1 origin "$BRANCH" </dev/null
+    git -C "$SRC_DIR" checkout -B "$BRANCH" FETCH_HEAD </dev/null >/dev/null
 elif [ -e "$SRC_DIR" ]; then
     die "$SRC_DIR 已存在但不是 git 仓库；请移走该目录或使用 --dir"
 else
     log "克隆源码到 $SRC_DIR"
-    git clone --depth 1 --branch "$BRANCH" "$REPO" "$SRC_DIR"
+    git clone --depth 1 --branch "$BRANCH" "$REPO" "$SRC_DIR" </dev/null
 fi
 [ -f "$SRC_DIR/debian/install.sh" ] || die "源码不完整：找不到 $SRC_DIR/debian/install.sh"
 
 # ── install / upgrade ───────────────────────────────────────────────────
 log "安装/更新 cf-speedtest 到 /opt/cf-speedtest（保留已有配置）"
-sh "$SRC_DIR/debian/install.sh"
+sh "$SRC_DIR/debian/install.sh" </dev/null
 
 # ── optional web overrides ──────────────────────────────────────────────
 if [ -n "$LISTEN" ] || [ -n "$PORT" ] || [ -n "$TOKEN" ]; then
@@ -199,7 +208,7 @@ PY
 fi
 
 if [ "$HAS_SYSTEMD" = 1 ]; then
-    systemctl restart cf-speedtest-web.service
+    systemctl restart cf-speedtest-web.service </dev/null
 fi
 
 # ── proxy cores ─────────────────────────────────────────────────────────
@@ -236,7 +245,7 @@ PY
         ok=0
         for attempt in 1 2 3; do
             log "安装/升级 $target 内核（第 $attempt/3 次）"
-            if cfst update-core --type "$target"; then
+            if cfst update-core --type "$target" </dev/null; then
                 ok=1
                 break
             fi
@@ -277,7 +286,7 @@ if [ "$HAS_SYSTEMD" = 1 ]; then
     log "等待 Web 服务就绪: http://$CHECK_HOST:$CFG_PORT/api/ping"
     ready=0
     for _ in $(seq 1 20); do
-        if curl -fsS --max-time 2 "http://$CHECK_HOST:$CFG_PORT/api/ping" >/dev/null 2>&1; then
+        if curl -fsS --max-time 2 "http://$CHECK_HOST:$CFG_PORT/api/ping" </dev/null >/dev/null 2>&1; then
             ready=1
             break
         fi
@@ -287,7 +296,7 @@ if [ "$HAS_SYSTEMD" = 1 ]; then
         log "Web 健康检查通过"
     else
         warn "Web 健康检查失败；最近日志："
-        journalctl -u cf-speedtest-web.service -n 50 --no-pager || true
+        journalctl -u cf-speedtest-web.service -n 50 --no-pager </dev/null || true
         CORE_FAILED=1
     fi
 else

@@ -109,7 +109,9 @@ make V=99
 一键部署（Debian/Ubuntu）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh -o /tmp/cfst-deploy.sh
+sudo bash /tmp/cfst-deploy.sh
+rm -f /tmp/cfst-deploy.sh
 ```
 
 或手动安装：

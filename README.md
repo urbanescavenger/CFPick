@@ -106,7 +106,9 @@ Python3-stdlib web UI, and exports CSV/JSON results.
 One-click deploy on Debian/Ubuntu:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh -o /tmp/cfst-deploy.sh
+sudo bash /tmp/cfst-deploy.sh
+rm -f /tmp/cfst-deploy.sh
 ```
 
 Or install manually:
