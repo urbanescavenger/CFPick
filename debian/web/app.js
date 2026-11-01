@@ -1002,7 +1002,14 @@
 			if (response.app) renderAppInfo(response.app);
 			waitForAppUpdate();
 		} catch (e) {
-			toast(e.message, true);
+			// fetch 本身失败（TypeError）通常说明服务已经开始重启、连接被断开；
+			// 更新可能正在进行，继续轮询状态，而不是直接报 "Failed to fetch"。
+			if (e instanceof TypeError) {
+				toast('更新请求已断开（Web 服务可能正在重启），等待更新结果…');
+				waitForAppUpdate();
+			} else {
+				toast(e.message, true);
+			}
 		}
 	}
 

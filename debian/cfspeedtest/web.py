@@ -651,6 +651,9 @@ class Handler(BaseHTTPRequestHandler):
         unit = "cfst-selfupdate-%d" % now
         command = [
             "systemd-run",
+            # 只排队不等待：更新脚本会重启 Web 服务，等待会让本请求的连接
+            # 在响应发出前被断开，浏览器只会看到 "Failed to fetch"。
+            "--no-block",
             "--unit=" + unit,
             "--collect",
             "--property=Type=oneshot",
