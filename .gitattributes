@@ -1,0 +1,11 @@
+* text=auto
+
+# These are executed on Linux (Debian/Ubuntu and OpenWrt); CRLF must never
+# reach a shebang or a systemd unit.
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.service text eol=lf
+debian/cfst text eol=lf
