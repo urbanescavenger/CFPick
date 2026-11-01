@@ -30,6 +30,7 @@ jobs:
           bash -n debian/deploy.sh
           sh -n debian/install.sh
           sh -n debian/uninstall.sh
+          sh -n debian/self-update.sh
           sh -n debian/cfst
           bash debian/deploy.sh --help >/dev/null
 

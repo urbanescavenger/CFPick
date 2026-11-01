@@ -14,6 +14,8 @@
 		history: [],
 		nodeInfo: [],
 		coreTags: {},
+		appInfo: null,
+		appTimer: 0,
 		tab: 'overview',
 		logPos: 0,
 		resultFilter: '',
@@ -149,6 +151,7 @@
 			reloadLog(true);
 		} else if (name === 'core') {
 			refreshCore();
+			refreshAppInfo();
 		} else if (name === 'nodes') {
 			refreshNodeInfo();
 		}
@@ -942,6 +945,83 @@
 		} catch (e) { /* ignore */ }
 	}
 
+	// ── application self-update ──────────────────────────────────────────
+	function renderAppInfo(app) {
+		if (!app) return;
+		state.appInfo = app;
+		setText('app-current-version', app.version || '—');
+		setText('app-commit', app.commit || '—');
+		setText('app-branch', app.branch || '—');
+		setText('app-source', app.source_dir || '—');
+		const update = app.update || {};
+		let text = '—';
+		if (update.updating) {
+			text = update.message || '更新中…';
+		} else if (update.message) {
+			text = update.message
+				+ (update.error ? '：' + update.error : '')
+				+ (update.commit ? '（' + update.commit + '）' : '');
+		} else if (!app.manageable) {
+			text = '源码目录不可用，无法在线更新';
+		} else if (!app.systemd_run) {
+			text = '未找到 systemd-run，无法在线更新';
+		}
+		setText('app-update-state', text);
+		const button = $('#btn-app-update');
+		if (button) {
+			const busy = !!update.updating;
+			button.disabled = !app.manageable || !app.systemd_run || busy;
+			button.textContent = busy ? '更新中…' : '更新程序';
+		}
+	}
+
+	async function refreshAppInfo() {
+		try {
+			renderAppInfo(await api('/api/app'));
+		} catch (e) { /* ignore */ }
+	}
+
+	async function updateApp() {
+		if (!confirm('更新程序会拉取代码并重启 Web 服务，页面会短暂断连。继续？'))
+			return;
+		try {
+			const response = await api('/api/update-app', { method: 'POST', body: {} });
+			toast(response.message || '已开始更新程序');
+			if (response.app) renderAppInfo(response.app);
+			waitForAppUpdate();
+		} catch (e) {
+			toast(e.message, true);
+		}
+	}
+
+	function waitForAppUpdate() {
+		clearInterval(state.appTimer);
+		let attempts = 0;
+		state.appTimer = setInterval(async () => {
+			attempts += 1;
+			try {
+				const app = await api('/api/app');
+				renderAppInfo(app);
+				if (!app.update || !app.update.updating) {
+					clearInterval(state.appTimer);
+					state.appTimer = 0;
+					const ok = !!(app.update && app.update.ok);
+					const detail = (app.update && (app.update.error || app.update.message)) || '请查看更新日志';
+					toast(ok ? '程序更新完成，页面即将刷新' : ('更新失败：' + detail), !ok);
+					setTimeout(() => window.location.reload(), 1200);
+					return;
+				}
+			} catch (e) {
+				/* the web service is restarting */
+			}
+			if (attempts >= 60) {
+				clearInterval(state.appTimer);
+				state.appTimer = 0;
+				toast('更新状态超时，请手动刷新页面', true);
+			}
+		}, 2000);
+	}
+
 	function scheduleCorePoll() {
 		clearTimeout(state.coreTimer);
 		if (state.core && state.core.updating) {
@@ -993,6 +1073,7 @@
 			api('/api/history'),
 			api('/api/nodes'),
 			api('/api/core'),
+			api('/api/app'),
 		]);
 		state.config = results[0].config;
 		state.status = results[1];
@@ -1001,6 +1082,7 @@
 		state.history = (results[3] && results[3].history) || [];
 		state.nodeInfo = (results[4] && results[4].nodes) || [];
 		state.core = results[5];
+		state.appInfo = results[6];
 		if (results[1] && results[1].state_dir)
 			setText('state-dir', results[1].state_dir);
 		$('#dl-log').href = withToken('/api/export/log');
@@ -1012,6 +1094,7 @@
 		renderBest();
 		renderChart();
 		renderCore(state.core);
+		renderAppInfo(state.appInfo);
 		activateTab(initialTab());
 	}
 
@@ -1067,6 +1150,7 @@
 		$('#dl-log').href = withToken('/api/export/log');
 
 		$('#btn-core-refresh').addEventListener('click', refreshCore);
+		$('#btn-app-update').addEventListener('click', updateApp);
 		$('#btn-save-core').addEventListener('click', async () => {
 			state.config.core.type = $('#core-type').value;
 			await saveConfig('内核选择已保存');

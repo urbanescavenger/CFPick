@@ -28,6 +28,7 @@ cp -a "$SRC_DIR/cfspeedtest" "$APP_DIR/cfspeedtest"
 cp -a "$SRC_DIR/web" "$APP_DIR/web"
 cp -a "$SRC_DIR/data" "$APP_DIR/data"
 install -m 755 "$SRC_DIR/cfst" "$APP_DIR/cfst"
+install -m 755 "$SRC_DIR/self-update.sh" "$APP_DIR/self-update.sh"
 install -m 755 "$SRC_DIR/uninstall.sh" "$APP_DIR/uninstall.sh"
 install -m 644 "$SRC_DIR/README.md" "$APP_DIR/README.md"
 ln -sf "$APP_DIR/cfst" /usr/local/bin/cfst

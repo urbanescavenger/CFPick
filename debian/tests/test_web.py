@@ -35,6 +35,7 @@ class WebTests(unittest.TestCase):
             "CFST_CONFIG_DIR": str(base / "etc"),
             "CFST_CONFIG": str(base / "etc" / "config.json"),
             "CFST_LOG_DIR": str(base / "log"),
+            "CFST_SRC_DIR": str(base / "no-source-checkout"),
             "CFST_SKIP_CRON": "1",
             "PYTHONPATH": str(ROOT),
             "PYTHONUNBUFFERED": "1",
@@ -125,6 +126,16 @@ class WebTests(unittest.TestCase):
         self.assertIn("xray", data["cores"])
         status, data = self.request("/api/core/update", method="POST",
                                     payload={"type": "bogus"})
+        self.assertEqual(status, 400)
+
+    def test_app_update_api(self):
+        status, data = self.request("/api/app")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["version"], "1.0.0")
+        self.assertIn("source_dir", data)
+        self.assertIn("update", data)
+        self.assertFalse(data["manageable"])
+        status, data = self.request("/api/update-app", method="POST", payload={})
         self.assertEqual(status, 400)
 
     def test_static_files(self):

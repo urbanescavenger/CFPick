@@ -45,6 +45,12 @@ LAST_LOG = STATE_DIR / "last.log"
 STATE_FILE = STATE_DIR / "state.json"
 RUN_LOCK_DIR = STATE_DIR / ".run.lock"
 STOP_FILE = STATE_DIR / "stop.request"
+UPDATE_STATE = STATE_DIR / "update-app.json"
+UPDATE_LOG = LOG_DIR / "update-app.log"
+
+# Git checkout created by debian/deploy.sh; the Web "update app" button pulls
+# this checkout and re-installs from it.
+SOURCE_DIR = _path("CFST_SRC_DIR", "/opt/cf-speedtest-src")
 
 WEB_DIR = APP_DIR / "web"
 BUILTIN_DIR = APP_DIR / "data"

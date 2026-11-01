@@ -119,6 +119,16 @@ sudo sh debian/install.sh
 
 ### 升级
 
+推荐直接用 deploy 脚本做“只更新程序、不动内核”：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh -o /tmp/cfst-deploy.sh
+sudo bash /tmp/cfst-deploy.sh --core none
+rm -f /tmp/cfst-deploy.sh
+```
+
+或者手动：
+
 ```bash
 cd luci-app-passwall-speedtest
 git pull
@@ -132,6 +142,23 @@ sudo cfst update-core --type mihomo
 sudo cfst update-core --type xray
 sudo cfst update-core --type all
 ```
+
+### Web 在线更新程序
+
+安装后，Web「内核」页底部有「程序更新」卡片，显示当前版本、代码提交、分支和源码目录。
+点击「更新程序」会：
+
+1. 从 `/opt/cf-speedtest-src` 拉取当前分支；
+2. 重新安装到 `/opt/cf-speedtest`（保留配置）；
+3. 重启 `cf-speedtest-web`，页面短暂断连后自动恢复。
+
+要求：
+
+- `/opt/cf-speedtest-src` 是 `deploy.sh` 创建的 git 仓库（手动 clone 安装时可把它放到该路径）；
+- 系统使用 systemd（更新通过 `systemd-run` 在独立 cgroup 中执行，避免被 Web 重启杀掉）。
+
+从**没有这个按钮的旧版本**第一次升级时，仍需在服务器执行一次上面的
+`deploy.sh --core none`；之后的版本更新可以直接在 Web 里点按钮。
 
 ### 卸载
 
@@ -186,7 +213,7 @@ sudo cfst update-core --type all      # 两个都装
 | IP 列表 | 五个在线 CM 列表的启用/名称/国家码/端口 |
 | 设置 | 候选来源、延迟与丢包阈值、探测参数、下载实测、限时迭代、定时任务、内核路径/DNS、Web 监听与访问令牌 |
 | 日志 | 增量拉取运行日志，2 秒自动刷新，自动滚动，下载日志 |
-| 内核 | 选择当前内核（mihomo / Xray），分别查看版本/路径/来源，按卡片安装或升级（可填版本标签），并设置每个内核的自定义二进制路径 |
+| 内核 | 选择当前内核（mihomo / Xray），分别查看版本/路径/来源，按卡片安装或升级（可填版本标签），设置每个内核的自定义二进制路径；底部「程序更新」可在线拉取代码并重启 Web |
 
 ### 访问令牌
 
@@ -270,6 +297,7 @@ cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 | `/var/lib/cf-speedtest/core/mihomo.version` / `xray.version` | 当前安装的版本标签 |
 | `/var/log/cf-speedtest/mihomo.log` / `xray.log` | 内核输出（排查节点握手/证书问题） |
 | `/var/log/cf-speedtest/core-update.log` | 内核下载/升级日志 |
+| `/var/log/cf-speedtest/update-app.log` | Web「程序更新」的 git/install 输出 |
 | `/var/log/cf-speedtest/spawn.log` | Web 启动测速子进程时的早期输出 |
 
 下载接口：`/api/export/result.csv`、`/api/export/result.json`、`/api/export/log`

@@ -11,6 +11,7 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -38,6 +39,63 @@ def _cron_status(force=False):
         _cron_cache["ts"] = now
         _cron_cache["info"] = cron.current()
     return _cron_cache["info"]
+
+
+def _git_output(source, *args):
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(source)] + list(args),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.decode("utf-8", "replace").strip()
+
+
+def _read_update_state():
+    try:
+        with open(paths.UPDATE_STATE, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_update_state(data):
+    paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(paths.UPDATE_STATE) + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False)
+            handle.write("\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, paths.UPDATE_STATE)
+    except OSError:
+        pass
+
+
+def _app_info():
+    source = paths.SOURCE_DIR
+    script = paths.APP_DIR / "self-update.sh"
+    manageable = (source / ".git").exists() and script.exists()
+    branch = _git_output(source, "rev-parse", "--abbrev-ref", "HEAD") if manageable else ""
+    commit = _git_output(source, "rev-parse", "--short", "HEAD") if manageable else ""
+    if branch == "HEAD":
+        branch = "DB"
+    return {
+        "version": __version__,
+        "source_dir": str(source),
+        "manageable": manageable,
+        "branch": branch,
+        "commit": commit,
+        "systemd_run": bool(shutil.which("systemd-run")),
+        "update": _read_update_state(),
+    }
 
 
 def _parse_link_summary(item, index):
@@ -268,6 +326,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(read_chunk(paths.RUN_LOG, pos, first_tail=tail))
         elif route == "/api/core":
             self._send_json(self._core_payload())
+        elif route == "/api/app":
+            self._send_json(_app_info())
         elif route.startswith("/api/export/"):
             self._export(route.rsplit("/", 1)[-1])
         else:
@@ -366,6 +426,8 @@ class Handler(BaseHTTPRequestHandler):
             self._save_config(body)
         elif route == "/api/core/update":
             self._update_core(body)
+        elif route == "/api/update-app":
+            self._update_app()
         else:
             self._send_error(404, "not found")
 
@@ -373,6 +435,9 @@ class Handler(BaseHTTPRequestHandler):
         mode = body.get("mode", "start")
         if mode not in ("start", "retest"):
             self._send_error(400, "mode must be start or retest")
+            return
+        if _read_update_state().get("updating"):
+            self._send_error(409, "程序正在更新，请稍候再开始测速")
             return
         if lock.is_running():
             self._send_error(409, "已有测速在运行")
@@ -463,6 +528,9 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _update_core(self, body):
+        if _read_update_state().get("updating"):
+            self._send_json({"updating": True, "message": "程序正在更新，请稍候"}, status=409)
+            return
         requested = str(body.get("type") or "").strip().lower()
         if requested and requested not in core.CORE_TYPES:
             self._send_error(400, "未知内核类型: %s" % requested)
@@ -513,6 +581,106 @@ class Handler(BaseHTTPRequestHandler):
             "type": core_type,
             "message": "已开始更新 %s 内核" % core_type,
         }, status=202)
+
+    def _update_app(self):
+        app = _app_info()
+        if not app["manageable"]:
+            self._send_error(
+                400, "在线更新不可用：源码目录不是 git 仓库或缺少 self-update.sh（%s）"
+                     % paths.SOURCE_DIR)
+            return
+        if not app["systemd_run"]:
+            self._send_error(
+                400, "未找到 systemd-run，无法在线更新；请在服务器执行 "
+                     "deploy.sh --core none 手动更新")
+            return
+        if lock.is_running():
+            self._send_error(409, "测速正在运行，先停止测速再更新程序")
+            return
+        if _core_update["updating"]:
+            self._send_error(409, "内核正在更新，请稍候再更新程序")
+            return
+        state = app["update"]
+        now = int(time.time())
+        if state.get("updating") and now - int(state.get("updated_at") or 0) < 600:
+            self._send_json({
+                "updating": True,
+                "message": "已有程序更新在进行，请稍候",
+                "app": app,
+            })
+            return
+
+        branch = app["branch"] or "DB"
+        if not re.match(r"^[A-Za-z0-9._/-]+$", branch):
+            self._send_error(400, "当前分支名不合法: %s" % branch)
+            return
+
+        # Run a copy of the script: install.sh overwrites the installed copy
+        # while the update is running, which can corrupt a shell script that is
+        # still being read from disk.
+        run_script = paths.STATE_DIR / "self-update-run.sh"
+        try:
+            paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(paths.APP_DIR / "self-update.sh", run_script)
+            os.chmod(run_script, 0o700)
+        except OSError as exc:
+            self._fail_app_update("准备更新脚本失败: %s" % exc)
+            self._send_error(500, "准备更新脚本失败: %s" % exc)
+            return
+
+        _write_update_state({
+            "updating": True,
+            "ok": False,
+            "message": "正在启动更新...",
+            "commit": "",
+            "branch": branch,
+            "updated_at": now,
+        })
+        unit = "cfst-selfupdate-%d" % now
+        command = [
+            "systemd-run",
+            "--unit=" + unit,
+            "--collect",
+            "--property=Type=oneshot",
+            "--property=WorkingDirectory=" + str(paths.SOURCE_DIR),
+            "/bin/sh",
+            str(run_script),
+            str(paths.SOURCE_DIR),
+            branch,
+            str(paths.UPDATE_STATE),
+            str(paths.UPDATE_LOG),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._fail_app_update("启动更新失败: %s" % exc)
+            self._send_error(500, "启动更新失败: %s" % exc)
+            return
+        if completed.returncode != 0:
+            error = completed.stderr.decode("utf-8", "replace").strip()
+            self._fail_app_update("systemd-run 失败: %s" % error)
+            self._send_error(500, "systemd-run 失败: %s" % error)
+            return
+        self._send_json({
+            "started": True,
+            "message": "已开始更新，Web 服务会短暂重启",
+            "app": _app_info(),
+        }, status=202)
+
+    def _fail_app_update(self, message):
+        _write_update_state({
+            "updating": False,
+            "ok": False,
+            "message": "程序更新失败",
+            "error": message,
+            "updated_at": int(time.time()),
+        })
 
 
 def serve(listen=None, port=None):
