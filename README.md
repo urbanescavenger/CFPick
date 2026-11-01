@@ -103,11 +103,21 @@ require OpenWrt or PassWall. It bundles two switchable, independently upgradable
 (mihomo and Xray-core), tests candidate Cloudflare IPs through your share links, ships a
 Python3-stdlib web UI, and exports CSV/JSON results.
 
+One-click deploy on Debian/Ubuntu:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh | sudo bash
+```
+
+Or install manually:
+
 ```bash
 git clone -b DB https://github.com/urbanescavenger/luci-app-passwall-speedtest.git
 cd luci-app-passwall-speedtest
 sudo sh debian/install.sh
 ```
+
+See [`debian/README.md`](debian/README.md) for deployment, upgrade, uninstall and Web access.
 
 ## Acknowledgements
 

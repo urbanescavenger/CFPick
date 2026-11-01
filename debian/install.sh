@@ -28,6 +28,7 @@ cp -a "$SRC_DIR/cfspeedtest" "$APP_DIR/cfspeedtest"
 cp -a "$SRC_DIR/web" "$APP_DIR/web"
 cp -a "$SRC_DIR/data" "$APP_DIR/data"
 install -m 755 "$SRC_DIR/cfst" "$APP_DIR/cfst"
+install -m 755 "$SRC_DIR/uninstall.sh" "$APP_DIR/uninstall.sh"
 install -m 644 "$SRC_DIR/README.md" "$APP_DIR/README.md"
 ln -sf "$APP_DIR/cfst" /usr/local/bin/cfst
 
@@ -43,9 +44,16 @@ else
 fi
 
 install -m 644 "$SRC_DIR/systemd/cf-speedtest-web.service" "$UNIT"
-systemctl daemon-reload
-systemctl enable --now cf-speedtest-web.service
-log "Web 服务已启动: http://127.0.0.1:8787/"
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable cf-speedtest-web.service
+    systemctl restart cf-speedtest-web.service
+    log "Web 服务已启动/重启: http://127.0.0.1:8787/"
+else
+    log "未检测到 systemd，跳过服务启动。手动启动："
+    log "  cd $APP_DIR && CFST_APP_DIR=$APP_DIR PYTHONPATH=$APP_DIR python3 -m cfspeedtest serve"
+fi
 
 cat <<'EOF'
 

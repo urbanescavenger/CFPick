@@ -1,0 +1,43 @@
+name: Debian tests
+
+on:
+  push:
+    branches:
+      - DB
+      - main
+    paths:
+      - 'debian/**'
+      - '.github/workflows/debian.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Shell syntax
+        run: |
+          bash -n debian/deploy.sh
+          sh -n debian/install.sh
+          sh -n debian/uninstall.sh
+          sh -n debian/cfst
+          bash debian/deploy.sh --help >/dev/null
+
+      - name: JavaScript syntax
+        run: node --check debian/web/app.js
+
+      - name: Python tests
+        run: |
+          cd debian
+          PYTHONPATH=. python -m compileall -q cfspeedtest
+          PYTHONPATH=. python -m unittest discover -s tests -v

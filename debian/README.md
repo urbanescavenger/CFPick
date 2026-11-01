@@ -52,6 +52,50 @@ Python3 标准库实现的 Web 可视化页面。
 
 ## 安装
 
+### 一键部署（推荐）
+
+在目标 Debian/Ubuntu 机器上直接执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh | sudo bash
+```
+
+或者从仓库运行：
+
+```bash
+git clone -b DB https://github.com/urbanescavenger/luci-app-passwall-speedtest.git
+cd luci-app-passwall-speedtest
+sudo bash debian/deploy.sh
+```
+
+`deploy.sh` 会：
+
+1. 安装依赖（git / curl / ca-certificates / cron / python3）；
+2. 把分支 `DB` 拉到 `/opt/cf-speedtest-src`（已存在则更新）；
+3. 调用 `install.sh` 安装/更新到 `/opt/cf-speedtest`，保留已有配置；
+4. 按需下载 mihomo / Xray 内核；
+5. 重启 Web 服务并做 `/api/ping` 健康检查；
+6. 打印 Web 地址、SSH 隧道命令、配置/结果/日志路径。
+
+常用参数：
+
+```bash
+sudo bash debian/deploy.sh --core all
+sudo bash debian/deploy.sh --listen 0.0.0.0 --token "$(openssl rand -hex 24)"
+sudo bash debian/deploy.sh --core none          # 只升级程序，不动内核
+sudo bash debian/deploy.sh --uninstall
+sudo bash debian/deploy.sh --purge
+```
+
+默认安装/检查**当前配置使用的内核**（全新安装时是 mihomo，已安装时跳过）；
+`--core all` 安装或升级两个内核，`--core xray` 单独安装 Xray。重新执行脚本即可升级程序，
+已有 `/etc/cf-speedtest/config.json` 不会被覆盖。
+
+> 直接用 `curl | sudo bash` 前如果不放心，可以先下载到本地查看：
+> `curl -fsSLO .../debian/deploy.sh && less deploy.sh && sudo bash deploy.sh`。
+
+### 手动安装
+
 ```bash
 git clone -b DB https://github.com/urbanescavenger/luci-app-passwall-speedtest.git
 cd luci-app-passwall-speedtest
@@ -60,14 +104,39 @@ sudo sh debian/install.sh
 
 安装脚本会：
 
-1. 复制程序到 `/opt/cf-speedtest`；
+1. 复制程序到 `/opt/cf-speedtest`（含 `uninstall.sh`）；
 2. 创建 `/etc/cf-speedtest/config.json`（权限 600）、`/var/lib/cf-speedtest`、
    `/var/log/cf-speedtest`；
-3. 安装并启动 `cf-speedtest-web.service`（默认 `http://127.0.0.1:8787/`）；
+3. 安装/启用并重启 `cf-speedtest-web.service`（默认 `http://127.0.0.1:8787/`）；
+   没有 systemd 的容器只打印手动启动命令；
 4. 创建 `/usr/local/bin/cfst` 命令。
 
-已有配置不会被覆盖。卸载：`sudo sh debian/uninstall.sh`（保留配置与结果），
-`--purge` 一并删除。
+已有配置不会被覆盖。
+
+### 升级
+
+```bash
+cd luci-app-passwall-speedtest
+git pull
+sudo sh debian/install.sh          # 会重启 Web 服务
+```
+
+内核在 Web「内核」页单独升级，或：
+
+```bash
+sudo cfst update-core --type mihomo
+sudo cfst update-core --type xray
+sudo cfst update-core --type all
+```
+
+### 卸载
+
+```bash
+sudo /opt/cf-speedtest/uninstall.sh            # 保留配置、结果、日志
+sudo /opt/cf-speedtest/uninstall.sh --purge    # 全部删除
+```
+
+也可以在仓库里运行 `sudo sh debian/uninstall.sh`。
 
 ## 首次使用
 

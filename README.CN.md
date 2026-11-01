@@ -104,13 +104,23 @@ make V=99
 
 ## Debian / Ubuntu 独立版
 
-分支 `DB` 提供一套不依赖 OpenWrt/PassWall 的独立实现，位于 [`debian/`](debian/README.md)：自带 **mihomo / Xray-core** 两个可切换、可分别升级的代理内核模块（用节点分享链接测速）、Python3 标准库引擎与 Web 可视化页面，结果导出为 CSV/JSON。安装：
+分支 `DB` 提供一套不依赖 OpenWrt/PassWall 的独立实现，位于 [`debian/`](debian/README.md)：自带 **mihomo / Xray-core** 两个可切换、可分别升级的代理内核模块（用节点分享链接测速）、Python3 标准库引擎与 Web 可视化页面，结果导出为 CSV/JSON。
+
+一键部署（Debian/Ubuntu）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh | sudo bash
+```
+
+或手动安装：
 
 ```bash
 git clone -b DB https://github.com/urbanescavenger/luci-app-passwall-speedtest.git
 cd luci-app-passwall-speedtest
 sudo sh debian/install.sh
 ```
+
+完整部署、升级、卸载和 Web 访问方式见 [`debian/README.md`](debian/README.md)。
 
 ## 致谢
 
