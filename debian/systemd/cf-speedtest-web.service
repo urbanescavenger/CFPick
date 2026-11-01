@@ -1,0 +1,23 @@
+[Unit]
+Description=Cloudflare IP speed test web UI (cf-speedtest)
+Documentation=file:///opt/cf-speedtest/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/cf-speedtest
+Environment=CFST_APP_DIR=/opt/cf-speedtest
+Environment=PYTHONPATH=/opt/cf-speedtest
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m cfspeedtest serve
+Restart=on-failure
+RestartSec=3
+# The service writes /etc/cf-speedtest, /var/lib/cf-speedtest,
+# /var/log/cf-speedtest, manages the root crontab and starts the mihomo core.
+# It therefore runs as root, like the OpenWrt package. Keep the listener on
+# 127.0.0.1 or put it behind an authenticating reverse proxy.
+
+[Install]
+WantedBy=multi-user.target

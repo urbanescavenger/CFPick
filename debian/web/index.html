@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloudflare IP 测速</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">CF</div>
+    <div>
+      <h1>Cloudflare IP 测速</h1>
+      <p>Debian / Ubuntu · 自带 mihomo / Xray 代理内核</p>
+    </div>
+  </div>
+  <div class="statusline">
+    <span id="status-dot" class="dot idle"></span>
+    <span id="status-text">正在加载…</span>
+  </div>
+  <div class="actions">
+    <button id="btn-start" class="btn primary" type="button">开始测速</button>
+    <button id="btn-stop" class="btn danger" type="button" disabled>停止</button>
+    <button id="btn-retest" class="btn" type="button">复测现有最优</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button type="button" class="tab active" data-tab="overview">概览</button>
+  <button type="button" class="tab" data-tab="nodes">节点</button>
+  <button type="button" class="tab" data-tab="iplists">IP 列表</button>
+  <button type="button" class="tab" data-tab="settings">设置</button>
+  <button type="button" class="tab" data-tab="logs">日志</button>
+  <button type="button" class="tab" data-tab="core">内核</button>
+</nav>
+
+<main>
+  <!-- ── Overview ───────────────────────────────────────────────── -->
+  <section class="panel active" data-panel="overview">
+    <div class="cards">
+      <div class="card stat">
+        <span class="label">运行状态</span>
+        <strong id="ov-phase">—</strong>
+        <span id="ov-elapsed" class="sub">—</span>
+      </div>
+      <div class="card stat">
+        <span class="label">全局最优 IP</span>
+        <strong id="ov-best-ip" class="mono">—</strong>
+        <span id="ov-best-meta" class="sub">—</span>
+      </div>
+      <div class="card stat">
+        <span class="label">代理内核</span>
+        <strong id="ov-core">—</strong>
+        <span id="ov-core-path" class="sub mono">—</span>
+      </div>
+      <div class="card stat">
+        <span class="label">定时任务</span>
+        <strong id="ov-cron">—</strong>
+        <span id="ov-cron-line" class="sub mono">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>各节点最优 IP</h2>
+        <div class="card-actions">
+          <a id="dl-csv" class="btn small" href="#">下载 CSV</a>
+          <a id="dl-json" class="btn small" href="#">下载 JSON</a>
+        </div>
+      </div>
+      <pre id="best-text" class="best-text">尚无结果。</pre>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>历史趋势</h2>
+        <span class="muted" id="chart-hint">每个点 = 某次运行中该节点的最优 IP</span>
+      </div>
+      <div class="chart-wrap"><canvas id="history-chart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>本次结果</h2>
+        <select id="result-filter" class="compact">
+          <option value="">全部节点</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="result-table">
+          <thead>
+            <tr><th>IP</th><th>延迟 (ms)</th><th>丢包</th><th>下载 (MB/s)</th><th>地区</th><th>节点</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="empty">尚无结果</td></tr></tbody>
+        </table>
+      </div>
+      <p class="muted" id="result-time"></p>
+    </div>
+  </section>
+
+  <!-- ── Nodes ──────────────────────────────────────────────────── -->
+  <section class="panel" data-panel="nodes">
+    <div class="card">
+      <div class="card-head">
+        <h2>代理节点</h2>
+        <div class="card-actions">
+          <button type="button" class="btn small" id="btn-bulk">批量导入</button>
+          <button type="button" class="btn small" id="btn-add-node">添加节点</button>
+          <button type="button" class="btn small primary" id="btn-save-nodes">保存节点</button>
+        </div>
+      </div>
+      <p class="muted">
+        每行一个节点，支持 <code>vless://</code>、<code>vmess://</code>、<code>trojan://</code>、
+        <code>ss://</code>、<code>hysteria2://</code> 分享链接。测速时会把链接中的服务器地址替换成候选
+        Cloudflare IP，端口保持不变；每个节点是一个并行 worker。链接含凭据，配置文件权限为 600。
+      </p>
+      <div class="table-wrap">
+        <table class="data nodes-table">
+          <thead>
+            <tr><th>启用</th><th>名称</th><th>分享链接</th><th>IP 列表</th><th>解析</th><th></th></tr>
+          </thead>
+          <tbody id="nodes-body"></tbody>
+        </table>
+      </div>
+      <div id="nodes-empty" class="empty-note hidden">还没有节点，点击「添加节点」或「批量导入」。</div>
+    </div>
+  </section>
+
+  <!-- ── IP lists ────────────────────────────────────────────────── -->
+  <section class="panel" data-panel="iplists">
+    <div class="card">
+      <div class="card-head">
+        <h2>在线 CM 源 IP 列表</h2>
+        <div class="card-actions">
+          <button type="button" class="btn small primary" id="btn-save-iplists">保存列表</button>
+        </div>
+      </div>
+      <p class="muted">
+        仅在「IP 来源 = 在线 CM 源」时使用。五个列表共享在线源地址，各自按端口和国家码过滤；
+        节点可在「节点」页指派其中一个列表，未指派的节点使用第一个启用的列表。
+        端口只用于挑选候选 IP，实际探测仍走节点自己的端口。
+      </p>
+      <div class="table-wrap">
+        <table class="data">
+          <thead>
+            <tr><th>启用</th><th>名称</th><th>国家码（空格或逗号分隔，留空 = 全部）</th><th>端口</th></tr>
+          </thead>
+          <tbody id="iplists-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Settings ────────────────────────────────────────────────── -->
+  <section class="panel" data-panel="settings">
+    <form id="settings-form" autocomplete="off">
+      <div class="card">
+        <div class="card-head"><h2>候选 IP 来源</h2></div>
+        <div class="grid">
+          <label>来源
+            <select id="ip_source">
+              <option value="builtin_ipv4">内置 IPv4 列表</option>
+              <option value="builtin_ipv6">内置 IPv6 列表</option>
+              <option value="online">在线 CM 源</option>
+              <option value="custom_file">自定义文件</option>
+            </select>
+          </label>
+          <label data-when="online">在线源地址
+            <input id="ip_online_url" type="text" spellcheck="false" placeholder="https://zip.cm.edu.kg/all.txt">
+          </label>
+          <label data-when="custom_file">自定义 IP 文件
+            <input id="custom_ip_file" type="text" spellcheck="false" placeholder="/etc/cf-speedtest/ip.txt">
+          </label>
+          <label class="check" data-when="custom_file">
+            <input id="custom_allip" type="checkbox">
+            扫描每个 /24 内的全部 IP（较慢）
+          </label>
+        </div>
+        <p class="muted">内置文件为 CIDR 段：默认每个 /24 随机取一个地址；IPv6 每个 /64 取一个样本。在线源格式为 <code>IP:PORT#国家码</code>。</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>延迟筛选与探测</h2></div>
+        <div class="grid three">
+          <label>延迟上限 (ms) <input id="latency_max" type="number" min="0" step="1"></label>
+          <label>延迟下限 (ms) <input id="latency_min" type="number" min="0" step="1"></label>
+          <label>丢包率上限 <input id="loss_max" type="number" min="0" max="1" step="0.01"></label>
+          <label>候选 IP 数 / 节点 <input id="test_count" type="number" min="1" step="1"></label>
+          <label>探测超时 (s) <input id="probe_timeout" type="number" min="1" step="1"></label>
+          <label>每 IP 探测次数 <input id="probes" type="number" min="1" max="5" step="1"></label>
+          <label>最大并发 worker <input id="max_workers" type="number" min="0" step="1"></label>
+          <label class="span2">探测 URL
+            <input id="probe_url" type="text" spellcheck="false">
+          </label>
+        </div>
+        <p class="muted">任意一次探测失败该 IP 立即丢弃，只有全部探测都成功才保留。并发上限 0 表示全部节点同时运行。</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>真实下载实测</h2></div>
+        <div class="grid three">
+          <label class="check"><input id="download_enabled" type="checkbox"> 启用下载实测</label>
+          <label>每节点候选数（最多 10） <input id="download_count" type="number" min="1" max="10" step="1"></label>
+          <label>单 IP 时限 (s) <input id="download_time" type="number" min="1" max="60" step="1"></label>
+          <label class="span2">下载 URL
+            <input id="download_url" type="text" spellcheck="false">
+          </label>
+        </div>
+        <p class="muted">所有 worker 停止延迟探测后，逐节点串行下载：只测每个节点延迟最优的前 N 个 IP；5 秒内不足 1 MB 的候选会被 curl 快速中止并判失败。下载失败的行会被剔除；全部失败时保留延迟排序。</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>限时迭代</h2></div>
+        <div class="grid three">
+          <label class="check"><input id="iterate_enabled" type="checkbox"> 启用限时迭代收敛</label>
+          <label>迭代时长（分钟） <input id="iterate_minutes" type="number" min="1" step="1"></label>
+        </div>
+        <p class="muted">每个节点独立循环：第一遍测初始候选，之后每遍只复测上一遍通过的 IP，直到时长结束或候选收敛到 ≤ 下载候选数（未启用下载时为 3）。迭代期间不写结果，结束后统一导出并对最终候选做下载实测。</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>定时任务</h2></div>
+        <div class="grid three">
+          <label class="check"><input id="schedule_enabled" type="checkbox"> 启用定时测速</label>
+          <label class="check"><input id="schedule_custom" type="checkbox"> 使用自定义 cron</label>
+          <label>间隔（小时） <input id="schedule_hour" type="number" min="1" max="24" step="1"></label>
+          <label class="span2" data-when="custom-cron">自定义 cron
+            <input id="schedule_cron" type="text" spellcheck="false" placeholder="0 3 * * *">
+          </label>
+        </div>
+        <p class="muted">保存配置时以幂等方式写入 crontab，只维护带 <code>cf-speedtest</code> 标记的块。自定义 cron 是标准五段表达式，注意分钟字段不要写成 <code>*</code>。</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>内核与 Web</h2></div>
+        <div class="grid three">
+          <label>自定义 DNS
+            <input id="core_dns" type="text" spellcheck="false" placeholder="223.5.5.5（留空用系统 DNS）">
+          </label>
+          <label>监听地址 <input id="web_listen" type="text" spellcheck="false"></label>
+          <label>监听端口 <input id="web_port" type="number" min="1" max="65535" step="1"></label>
+          <label>访问令牌 <input id="web_token" type="password" autocomplete="new-password" placeholder="留空表示不校验"></label>
+        </div>
+        <p class="muted">监听地址 / 端口修改后需要重启 Web 服务（<code>systemctl restart cf-speedtest-web</code>）才会生效。令牌仅用于 Web API；默认只监听 127.0.0.1。</p>
+      </div>
+
+      <div class="save-bar">
+        <span id="save-hint" class="muted"></span>
+        <button type="submit" class="btn primary">保存全部设置</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ── Logs ────────────────────────────────────────────────────── -->
+  <section class="panel" data-panel="logs">
+    <div class="card">
+      <div class="card-head">
+        <h2>运行日志</h2>
+        <div class="card-actions">
+          <label class="check inline"><input id="log-follow" type="checkbox" checked> 自动滚动</label>
+          <label class="check inline"><input id="log-autorefresh" type="checkbox" checked> 每 2 秒刷新</label>
+          <button type="button" class="btn small" id="btn-log-reload">重新加载</button>
+          <a class="btn small" id="dl-log" href="#">下载日志</a>
+        </div>
+      </div>
+      <pre id="log-view" class="log-view"></pre>
+      <p class="muted" id="log-meta"></p>
+    </div>
+  </section>
+
+  <!-- ── Core ────────────────────────────────────────────────────── -->
+  <section class="panel" data-panel="core">
+    <div class="card">
+      <div class="card-head">
+        <h2>内核模块</h2>
+        <div class="card-actions">
+          <button type="button" class="btn small" id="btn-core-refresh">刷新</button>
+          <button type="button" class="btn small primary" id="btn-save-core">保存内核设置</button>
+        </div>
+      </div>
+      <div class="grid">
+        <label>当前使用的内核
+          <select id="core-type">
+            <option value="mihomo">mihomo（Clash.Meta）</option>
+            <option value="xray">Xray-core</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted">
+        两个内核都是独立模块，可分别安装/升级，升级互不影响，也不会中断正在运行的测速（下一次运行生效）。
+        节点兼容性：mihomo 支持 vless / vmess / trojan / ss / hysteria2 及 h2/http 等传输；
+        xray 支持 vless / vmess / trojan / ss（SS 不支持 plugin），传输限 tcp / ws / grpc，
+        不支持 hysteria2（Xray 26 也已移除 h2/http 传输）。
+        自定义二进制路径优先于托管内核；卡片里的「安装 / 升级」始终更新托管内核。
+      </p>
+      <p class="muted" id="core-message"></p>
+    </div>
+    <div class="cards" id="core-cards"></div>
+    <div class="card">
+      <p class="muted">
+        内核从 GitHub Releases 下载，保存在数据目录；也可以在下方对应内核卡片里填写自定义
+        二进制路径（优先于托管内核）。更新失败时会保留旧版本。
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span>cf-speedtest <span id="app-version"></span></span>
+  <span>结果目录：<code id="state-dir">/var/lib/cf-speedtest</code></span>
+</footer>
+
+<!-- Auth overlay -->
+<div id="auth-overlay" class="overlay hidden">
+  <form class="dialog" id="auth-form" autocomplete="off">
+    <h2>需要访问令牌</h2>
+    <p class="muted">该服务端启用了访问令牌，请输入 Web 令牌。</p>
+    <input id="auth-token" type="password" placeholder="访问令牌" autofocus>
+    <div class="dialog-actions">
+      <button type="submit" class="btn primary">保存并继续</button>
+    </div>
+    <p class="error" id="auth-error"></p>
+  </form>
+</div>
+
+<!-- Bulk import dialog -->
+<div id="bulk-overlay" class="overlay hidden">
+  <div class="dialog wide">
+    <h2>批量导入节点</h2>
+    <p class="muted">每行一条分享链接；名称取自链接的 <code>#备注</code>，没有备注则自动命名。</p>
+    <textarea id="bulk-links" rows="12" spellcheck="false" placeholder="vless://...&#10;trojan://..."></textarea>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="bulk-cancel">取消</button>
+      <button type="button" class="btn primary" id="bulk-apply">导入</button>
+    </div>
+  </div>
+</div>
+
+<!-- Point detail dialog -->
+<div id="point-overlay" class="overlay hidden">
+  <div class="dialog">
+    <h2 id="point-title">节点</h2>
+    <div id="point-body" class="point-body"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="point-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/vendor/chart.js"></script>
+<script src="/vendor/chartjs-adapter-date-fns.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -96,6 +96,19 @@ make menuconfig
 make V=99
 ```
 
+## Debian / Ubuntu standalone edition
+
+Branch `DB` adds a standalone implementation under [`debian/`](debian/README.md) that does not
+require OpenWrt or PassWall. It bundles two switchable, independently upgradable proxy cores
+(mihomo and Xray-core), tests candidate Cloudflare IPs through your share links, ships a
+Python3-stdlib web UI, and exports CSV/JSON results.
+
+```bash
+git clone -b DB https://github.com/urbanescavenger/luci-app-passwall-speedtest.git
+cd luci-app-passwall-speedtest
+sudo sh debian/install.sh
+```
+
 ## Acknowledgements
 
 *   [openwrt-passwall](https://github.com/xiaorouji/openwrt-passwall)

@@ -1,0 +1,23 @@
+#!/bin/sh
+# cfst — CLI for cf-speedtest (Cloudflare IP speed test on Debian/Ubuntu).
+# Run `cfst --help` for commands.
+set -eu
+
+SELF=$0
+while [ -L "$SELF" ]; do
+    DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
+    SELF=$(readlink "$SELF")
+    case "$SELF" in
+        /*) ;;
+        *) SELF="$DIR/$SELF" ;;
+    esac
+done
+APP_DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
+if [ ! -d "$APP_DIR/cfspeedtest" ]; then
+    APP_DIR=${CFST_APP_DIR:-/opt/cf-speedtest}
+fi
+
+PYTHON=${CFST_PYTHON:-python3}
+export CFST_APP_DIR="$APP_DIR"
+export PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PYTHON" -m cfspeedtest "$@"

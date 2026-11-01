@@ -2,3 +2,6 @@ tmp/
 .DS_Store
 .test/
 .claude/
+__pycache__/
+*.pyc
+debian/.dev/
