@@ -145,6 +145,18 @@
 		}
 	}
 
+	// The console can be served at the root (direct :17544) or behind a
+	// reverse-proxy path prefix (e.g. Caddy `handle_path /CF/*`).  Resolve
+	// assets and the CGI relative to the page's directory so both work.
+	function apiBase() {
+		let path = window.location.pathname || '/';
+
+		if (path.charAt(path.length - 1) != '/')
+			path = path.substring(0, path.lastIndexOf('/') + 1);
+
+		return path || '/';
+	}
+
 	async function api(action, options) {
 		options = options || {};
 
@@ -167,7 +179,7 @@
 			body = JSON.stringify(options.body);
 		}
 
-		const response = await fetch('/cgi-bin/api?' + params.toString(), {
+		const response = await fetch(apiBase() + 'cgi-bin/api?' + params.toString(), {
 			method: options.method || 'GET',
 			headers: headers,
 			body: body,
