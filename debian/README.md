@@ -211,7 +211,7 @@ sudo cfst update-core --type all      # 两个都装
 | 概览 | 运行状态、全局最优、内核版本、定时任务、按节点分组的最优 IP、历史趋势图、完整结果表、CSV/JSON 下载 |
 | 节点 | 分享链接、名称、启用开关、每节点的 CM 列表指派、解析状态 |
 | IP 列表 | 五个在线 CM 列表的启用/名称/国家码/端口 |
-| 设置 | 候选来源、延迟与丢包阈值、探测参数、下载实测、限时迭代、定时任务、内核路径/DNS、Web 监听与访问令牌 |
+| 设置 | 候选来源、延迟与丢包阈值、探测参数、下载实测、限时迭代、定时任务、已设置任务（只读 cron 全览）、内核路径/DNS、Web 监听与访问令牌 |
 | 日志 | 增量拉取运行日志，2 秒自动刷新，自动滚动，下载日志 |
 | 内核 | 选择当前内核（mihomo / Xray），分别查看版本/路径/来源，按卡片安装或升级（可填版本标签），设置每个内核的自定义二进制路径；底部「程序更新」可在线拉取代码并重启 Web |
 
@@ -240,7 +240,7 @@ cfst update-core                      # 升级当前内核
 cfst update-core --type xray          # 单独升级 Xray
 cfst update-core --type all           # 两个都升级
 cfst update-core --type mihomo --tag v1.19.33   # 指定版本
-cfst cron apply|remove  # 按当前配置写入/移除 crontab
+cfst cron apply|remove|list  # 写入/移除 crontab，或只读列出全部任务
 cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 ```
 
@@ -315,6 +315,12 @@ cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 
 自定义 cron 为五段表达式；注意分钟字段不要写 `*`（`* 19 * * 4` 表示周四 19 点内每分钟一次）。
 命令行方式：`cfst cron apply` / `cfst cron remove`。
+
+「设置 → 已设置的任务」会以只读方式列出系统 cron 的全部来源：当前用户及其它用户的
+crontab、`/etc/crontab`、`/etc/cron.d/*`，以及 `/etc/cron.{hourly,daily,weekly,monthly}`
+下的可执行脚本；由本程序维护的那一行带「本程序」标记。该面板不会修改任何任务，
+其它任务只有在你手动编辑 crontab 时才会变化。命令行等价物：`cfst cron list`，
+Web API 为 `GET /api/cron`。
 
 ## 与 OpenWrt 版的对应关系
 

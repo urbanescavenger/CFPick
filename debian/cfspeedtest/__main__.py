@@ -86,6 +86,9 @@ def cmd_update_core(args):
 
 
 def cmd_cron(args):
+    if args.action == "list":
+        _print_json(cron.list_tasks())
+        return 0
     cfg = config.load()
     try:
         if args.action == "remove":
@@ -154,8 +157,9 @@ def build_parser():
     cores_parser = sub.add_parser("cores", help="list proxy core modules")
     cores_parser.set_defaults(func=cmd_cores)
 
-    cron_parser = sub.add_parser("cron", help="apply/remove the crontab entry")
-    cron_parser.add_argument("action", nargs="?", default="apply", choices=["apply", "remove"])
+    cron_parser = sub.add_parser("cron", help="apply/remove/list crontab entries")
+    cron_parser.add_argument("action", nargs="?", default="apply",
+                             choices=["apply", "remove", "list"])
     cron_parser.set_defaults(func=cmd_cron)
 
     serve_parser = sub.add_parser("serve", help="start the web UI")

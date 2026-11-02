@@ -5,12 +5,23 @@ other crontab line is preserved byte-for-byte.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
 
 BEGIN = "# >>> cf-speedtest >>>"
 END = "# <<< cf-speedtest <<<"
+
+# Read-only snapshot sources for the "already scheduled tasks" panel.
+USER_CRON_DIRS = ("/var/spool/cron/crontabs", "/var/spool/cron")
+PERIODIC_DIRS = (
+    ("/etc/cron.hourly", "每小时"),
+    ("/etc/cron.daily", "每天"),
+    ("/etc/cron.weekly", "每周"),
+    ("/etc/cron.monthly", "每月"),
+)
+MAX_ENTRIES = 500
 
 
 def _disabled():
@@ -122,3 +133,163 @@ def current():
         if inside and line.strip() and not found:
             found = line.strip()
     return {"installed": bool(found), "line": found}
+
+
+# ── read-only listing for the web panel ─────────────────────────────────
+
+def _classify(line):
+    if line.startswith("#"):
+        return "comment"
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", line):
+        return "env"
+    return "cron"
+
+
+def split_line(line):
+    """Split a cron line into (schedule, command) for display.
+
+    Handles both five-field entries and shortcuts such as ``@reboot``.  Lines
+    with fewer than six fields get an empty command instead of a guess.
+    """
+    parts = line.split()
+    if not parts:
+        return "", ""
+    if parts[0].startswith("@"):
+        return parts[0], " ".join(parts[1:])
+    if len(parts) >= 6:
+        return " ".join(parts[:5]), " ".join(parts[5:])
+    return line, ""
+
+
+def parse_text(text, source, managed=False):
+    """Parse one crontab file into entries, marking the managed block."""
+    entries = []
+    inside = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line == BEGIN:
+            inside = True
+            continue
+        if line == END:
+            inside = False
+            continue
+        kind = _classify(line)
+        schedule, command = split_line(line)
+        entries.append({
+            "source": source,
+            "kind": kind,
+            "schedule": schedule if kind == "cron" else "",
+            "command": command if kind == "cron" else line,
+            "line": line,
+            "managed": bool(managed and inside and kind == "cron"),
+        })
+    return entries
+
+
+def _current_user():
+    try:
+        import pwd
+    except ImportError:  # development on Windows
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    try:
+        return pwd.getpwuid(os.getuid()).pw_name
+    except (KeyError, OSError):
+        return ""
+
+
+def _read_file(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def _list_files(directory, executables=False):
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        if name.startswith("."):
+            continue
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path):
+            continue
+        if executables and not os.access(path, os.X_OK):
+            continue
+        found.append(name)
+    return found
+
+
+def list_tasks():
+    """Snapshot every cron source on the machine without modifying anything."""
+    entries = []
+    errors = []
+
+    try:
+        user_text = _read_crontab()
+    except CronError as exc:
+        user_text = ""
+        errors.append(str(exc))
+    user = _current_user()
+    entries.extend(parse_text(user_text, user or "当前用户", managed=True))
+
+    seen = {user} if user else set()
+    for directory in USER_CRON_DIRS:
+        for name in _list_files(directory):
+            if name in seen:
+                continue
+            text = _read_file(os.path.join(directory, name))
+            if not text:
+                continue  # unreadable for non-root or empty; skip silently
+            seen.add(name)
+            entries.extend(parse_text(text, "用户 " + name))
+
+    text = _read_file("/etc/crontab")
+    if text:
+        entries.extend(parse_text(text, "/etc/crontab"))
+
+    for name in _list_files("/etc/cron.d"):
+        # Debian's cron ignores names containing dots or ending in '~'.
+        if "." in name or name.endswith("~"):
+            continue
+        text = _read_file(os.path.join("/etc/cron.d", name))
+        if text:
+            entries.extend(parse_text(text, "/etc/cron.d/" + name))
+
+    for directory, label in PERIODIC_DIRS:
+        for name in _list_files(directory, executables=True):
+            entries.append({
+                "source": directory,
+                "kind": "script",
+                "schedule": label,
+                "command": name,
+                "line": name,
+                "managed": False,
+            })
+
+    if len(entries) > MAX_ENTRIES:
+        del entries[MAX_ENTRIES:]
+        errors.append("任务过多，仅显示前 %d 项" % MAX_ENTRIES)
+
+    managed_line = ""
+    inside = False
+    for raw in user_text.splitlines():
+        line = raw.strip()
+        if line == BEGIN:
+            inside = True
+        elif line == END:
+            inside = False
+        elif inside and line and not managed_line:
+            managed_line = line
+
+    return {
+        "installed": bool(shutil.which("crontab")),
+        "managed": {"enabled": bool(managed_line), "line": managed_line},
+        "entries": entries,
+        "errors": errors,
+    }

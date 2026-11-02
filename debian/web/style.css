@@ -175,6 +175,8 @@ table.data th { background: var(--bg-soft); color: var(--muted); font-weight: 60
 table.data tbody tr:last-child td { border-bottom: 0; }
 table.data tbody tr:hover { background: var(--accent-soft); }
 table.data td.ip { font-family: var(--mono); }
+.cron-table td.cron-command { white-space: normal; word-break: break-all; min-width: 260px; }
+.cron-table td.cron-raw { color: var(--muted); white-space: pre-wrap; word-break: break-all; }
 table.data tr.best td { font-weight: 600; }
 table.data .empty, .empty-note { color: var(--muted); text-align: center; padding: 22px; }
 .hidden { display: none !important; }

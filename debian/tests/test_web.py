@@ -138,6 +138,16 @@ class WebTests(unittest.TestCase):
         status, data = self.request("/api/update-app", method="POST", payload={})
         self.assertEqual(status, 400)
 
+    def test_cron_listing(self):
+        status, data = self.request("/api/cron")
+        self.assertEqual(status, 200)
+        self.assertIn("installed", data)
+        self.assertIn("managed", data)
+        self.assertIn("enabled", data["managed"])
+        self.assertIn("line", data["managed"])
+        self.assertIsInstance(data["entries"], list)
+        self.assertIsInstance(data["errors"], list)
+
     def test_static_files(self):
         status, text = self.request("/")
         self.assertEqual(status, 200)

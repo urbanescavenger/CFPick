@@ -233,6 +233,30 @@
       </div>
 
       <div class="card">
+        <div class="card-head">
+          <h2>已设置的任务</h2>
+          <div class="card-actions">
+            <span id="cron-note" class="muted"></span>
+            <button type="button" class="btn small" id="btn-cron-refresh">刷新</button>
+          </div>
+        </div>
+        <p class="muted">
+          只读列出系统 cron：当前用户及其它用户的 crontab、<code>/etc/crontab</code>、
+          <code>/etc/cron.d</code>，以及 <code>/etc/cron.{hourly,daily,weekly,monthly}</code> 下的可执行脚本。
+          标记「本程序」的一行由上方定时任务配置维护，其余任务本程序不会改动。
+        </p>
+        <div class="table-wrap">
+          <table class="data cron-table" id="cron-table">
+            <thead>
+              <tr><th>来源</th><th>计划</th><th>任务</th><th></th></tr>
+            </thead>
+            <tbody id="cron-body"><tr><td colspan="4" class="empty">加载中…</td></tr></tbody>
+          </table>
+        </div>
+        <p class="muted" id="cron-errors"></p>
+      </div>
+
+      <div class="card">
         <div class="card-head"><h2>内核与 Web</h2></div>
         <div class="grid three">
           <label>自定义 DNS

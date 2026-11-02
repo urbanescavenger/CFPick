@@ -336,6 +336,8 @@ class Handler(BaseHTTPRequestHandler):
                 pos = 0
             tail = 262144 if pos == 0 else 0
             self._send_json(read_chunk(paths.RUN_LOG, pos, first_tail=tail))
+        elif route == "/api/cron":
+            self._send_json(cron.list_tasks())
         elif route == "/api/core":
             self._send_json(self._core_payload())
         elif route == "/api/app":

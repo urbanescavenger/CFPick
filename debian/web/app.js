@@ -156,6 +156,8 @@
 			refreshAppInfo();
 		} else if (name === 'nodes') {
 			refreshNodeInfo();
+		} else if (name === 'settings') {
+			refreshCronTasks();
 		}
 	}
 
@@ -656,6 +658,71 @@
 		});
 	}
 
+	// ── scheduled tasks ─────────────────────────────────────────────────
+	function renderCronTasks(data) {
+		const body = $('#cron-body');
+		if (!body) return;
+		body.replaceChildren();
+		const entries = (data && data.entries) || [];
+		entries.forEach((entry) => {
+			const tr = document.createElement('tr');
+			if (entry.kind === 'comment' || entry.kind === 'env') {
+				// 注释和环境变量不是任务，占一整行按原样显示。
+				const td = document.createElement('td');
+				td.colSpan = 4;
+				td.className = 'mono cron-raw';
+				td.textContent = entry.line || '';
+				tr.appendChild(td);
+				body.appendChild(tr);
+				return;
+			}
+			const source = document.createElement('td');
+			source.className = 'muted';
+			source.textContent = entry.source || '—';
+			tr.appendChild(source);
+
+			const schedule = document.createElement('td');
+			schedule.className = 'mono';
+			schedule.textContent = entry.schedule || '—';
+			tr.appendChild(schedule);
+
+			const command = document.createElement('td');
+			command.className = 'mono cron-command';
+			command.textContent = entry.command || entry.line || '';
+			tr.appendChild(command);
+
+			const mark = document.createElement('td');
+			if (entry.managed) {
+				const badge = document.createElement('span');
+				badge.className = 'badge info';
+				badge.textContent = '本程序';
+				mark.appendChild(badge);
+			}
+			tr.appendChild(mark);
+			body.appendChild(tr);
+		});
+		if (!entries.length) {
+			const tr = document.createElement('tr');
+			const td = document.createElement('td');
+			td.colSpan = 4;
+			td.className = 'empty';
+			td.textContent = '没有读到已设置的 cron 任务';
+			tr.appendChild(td);
+			body.appendChild(tr);
+		}
+		const managed = data && data.managed;
+		setText('cron-note', managed && managed.line ? '本程序任务已启用' : '本程序任务未启用');
+		setText('cron-errors', ((data && data.errors) || []).join('；'));
+	}
+
+	async function refreshCronTasks() {
+		try {
+			renderCronTasks(await api('/api/cron'));
+		} catch (e) {
+			setText('cron-note', '读取失败：' + e.message);
+		}
+	}
+
 	// ── settings form ───────────────────────────────────────────────────
 	function fillSettings(cfg) {
 		const set = (id, value) => { const node = $('#' + id); if (node) node.value = value == null ? '' : value; };
@@ -776,6 +843,7 @@
 			fillSettings(state.config);
 			renderBest();
 			refreshCore();
+			refreshCronTasks();
 			if (hint) hint.textContent = '已保存 ' + new Date().toLocaleTimeString();
 			if (response.warnings && response.warnings.length)
 				toast(response.warnings.join('；'), true);
@@ -1159,6 +1227,7 @@
 		});
 		$('#ip_source').addEventListener('change', updateFieldVisibility);
 		$('#schedule_custom').addEventListener('change', updateFieldVisibility);
+		$('#btn-cron-refresh').addEventListener('click', refreshCronTasks);
 
 		$('#result-filter').addEventListener('change', (event) => {
 			state.resultFilter = event.target.value;
