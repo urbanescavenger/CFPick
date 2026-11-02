@@ -2,8 +2,8 @@ import json
 import unittest
 import urllib.parse
 
-from cfspeedtest import config, ddns
-from cfspeedtest.result import Row
+from cfpick import config, ddns
+from cfpick.result import Row
 
 
 def make_cfg(**overrides):

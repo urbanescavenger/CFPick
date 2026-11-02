@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cfspeedtest import paths, result
+from cfpick import paths, result
 
 
 class RowTests(unittest.TestCase):

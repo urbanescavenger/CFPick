@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cloudflare IP 测速</title>
+<title>CFPick 优选</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -11,8 +11,8 @@
   <div class="brand">
     <div class="logo">CF</div>
     <div>
-      <h1>Cloudflare IP 测速</h1>
-      <p>独立测速 · 自带 mihomo / Xray 代理内核</p>
+      <h1>CFPick 优选</h1>
+      <p>CDN 优选 · 自带 mihomo / Xray 代理内核</p>
     </div>
   </div>
   <div class="statusline">
@@ -177,7 +177,7 @@
             <input id="ip_online_url" type="text" spellcheck="false" placeholder="https://zip.cm.edu.kg/all.txt">
           </label>
           <label data-when="custom_file">自定义 IP 文件
-            <input id="custom_ip_file" type="text" spellcheck="false" placeholder="/etc/cf-speedtest/ip.txt">
+            <input id="custom_ip_file" type="text" spellcheck="false" placeholder="/etc/cfpick/ip.txt">
           </label>
           <label class="check" data-when="custom_file">
             <input id="custom_allip" type="checkbox">
@@ -259,7 +259,7 @@
         </p>
         <p class="muted">即将写入：
           <code id="schedule-preview">0 3 * * *</code>
-          <span>（保存配置时以幂等方式写入 crontab，只维护带 <code>cf-speedtest</code> 标记的块）</span>
+          <span>（保存配置时以幂等方式写入 crontab，只维护带 <code>cfpick</code> 标记的块）</span>
         </p>
       </div>
 
@@ -325,7 +325,7 @@
           <label>监听端口 <input id="web_port" type="number" min="1" max="65535" step="1"></label>
           <label>访问令牌 <input id="web_token" type="password" autocomplete="new-password" placeholder="留空表示不校验"></label>
         </div>
-        <p class="muted">监听地址 / 端口修改后需要重启 Web 服务（<code>systemctl restart cf-speedtest-web</code>）才会生效。令牌仅用于 Web API；默认只监听 127.0.0.1。</p>
+        <p class="muted">监听地址 / 端口修改后需要重启 Web 服务（<code>systemctl restart cfpick-web</code>）才会生效。令牌仅用于 Web API；默认只监听 127.0.0.1。</p>
       </div>
 
       <div class="save-bar">
@@ -405,8 +405,8 @@
 </main>
 
 <footer class="footer">
-  <span>cf-speedtest <span id="app-version"></span></span>
-  <span>结果目录：<code id="state-dir">/var/lib/cf-speedtest</code></span>
+  <span>cfpick <span id="app-version"></span></span>
+  <span>结果目录：<code id="state-dir">/var/lib/cfpick</code></span>
 </footer>
 
 <!-- Auth overlay -->

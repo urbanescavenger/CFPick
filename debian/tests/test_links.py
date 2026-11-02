@@ -2,7 +2,7 @@ import base64
 import json
 import unittest
 
-from cfspeedtest import links
+from cfpick import links
 
 
 def b64(value):
@@ -45,7 +45,7 @@ class VlessTests(unittest.TestCase):
         parsed = links.parse_link("vless://uuid@host:443?security=tls#n")
         proxy = parsed.proxy_for_ip("1.2.3.4")
         self.assertEqual(proxy["server"], "1.2.3.4")
-        self.assertEqual(proxy["name"], "cfst")
+        self.assertEqual(proxy["name"], "cfpick")
         self.assertEqual(parsed.proxy["server"], "host")
 
 

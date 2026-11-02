@@ -1,13 +1,13 @@
 #!/bin/sh
 # Pull the current branch, re-install, and restart the web service.
 # Invoked by the web UI through systemd-run so the restart of
-# cf-speedtest-web does not kill this update process.
+# cfpick-web does not kill this update process.
 set -eu
 
-SRC_DIR="${1:-/opt/cf-speedtest-src}"
-BRANCH="${2:-DB}"
-STATUS_FILE="${3:-/var/lib/cf-speedtest/update-app.json}"
-LOG_FILE="${4:-/var/log/cf-speedtest/update-app.log}"
+SRC_DIR="${1:-/opt/cfpick-src}"
+BRANCH="${2:-main}"
+STATUS_FILE="${3:-/var/lib/cfpick/update-app.json}"
+LOG_FILE="${4:-/var/log/cfpick/update-app.log}"
 
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$STATUS_FILE")"
 if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)" -gt 5242880 ]; then

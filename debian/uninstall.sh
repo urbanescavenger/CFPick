@@ -1,27 +1,27 @@
 #!/bin/sh
-# Uninstall cf-speedtest.  By default the configuration, results and logs are
+# Uninstall cfpick.  By default the configuration, results and logs are
 # kept; pass --purge to remove them as well.
 set -eu
 
 PURGE=0
 [ "${1:-}" = "--purge" ] && PURGE=1
 
-APP_DIR=/opt/cf-speedtest
-CONFIG_DIR=/etc/cf-speedtest
-STATE_DIR=/var/lib/cf-speedtest
-LOG_DIR=/var/log/cf-speedtest
-UNIT=/etc/systemd/system/cf-speedtest-web.service
+APP_DIR=/opt/cfpick
+CONFIG_DIR=/etc/cfpick
+STATE_DIR=/var/lib/cfpick
+LOG_DIR=/var/log/cfpick
+UNIT=/etc/systemd/system/cfpick-web.service
 
 [ "$(id -u)" = 0 ] || { echo "请使用 root 运行" >&2; exit 1; }
 
-if command -v cfst >/dev/null 2>&1; then
-    cfst cron remove >/dev/null 2>&1 || true
+if command -v cfpick >/dev/null 2>&1; then
+    cfpick cron remove >/dev/null 2>&1 || true
 fi
 
-systemctl disable --now cf-speedtest-web.service >/dev/null 2>&1 || true
+systemctl disable --now cfpick-web.service >/dev/null 2>&1 || true
 rm -f "$UNIT"
 systemctl daemon-reload >/dev/null 2>&1 || true
-rm -f /usr/local/bin/cfst
+rm -f /usr/local/bin/cfpick
 
 if [ "$PURGE" = 1 ]; then
     rm -rf "$APP_DIR" "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"

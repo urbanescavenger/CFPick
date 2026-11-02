@@ -1,4 +1,4 @@
-name: Compile passwall-speedtest LuCI App
+name: Compile CFPick LuCI App
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 env:
-  PKG: luci-app-passwall-speedtest
+  PKG: luci-app-cfpick
 
 jobs:
   build:
@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v5
 
       # tag 触发时把 Makefile 的 PKG_VERSION 注入为 tag 版本号（去掉前导 v），
-      # 使构建产物文件名带真实版本（如 luci-app-passwall-speedtest_2.0.2_all.ipk）。
+      # 使构建产物文件名带真实版本（如 luci-app-cfpick_1.0.0_all.ipk）。
       # main 分支构建不改，保持 Makefile 内 PKG_VERSION 字面值（仅作编译校验）。
       - name: Inject PKG_VERSION from tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -85,8 +85,8 @@ jobs:
       # and makes the artifact verification below meaningful.
       - name: Stage standalone engine
         run: |
-          mkdir -p root/usr/lib/cf-speedtest
-          cp -R debian/cfspeedtest debian/data root/usr/lib/cf-speedtest/
+          mkdir -p root/usr/lib/cfpick
+          cp -R debian/cfpick debian/data root/usr/lib/cfpick/
 
       - name: Copy source into SDKs
         run: |
@@ -126,18 +126,18 @@ jobs:
           [ -n "$ipk" ] || { echo "no ipk produced"; exit 1; }
           rm -rf /tmp/ipkcheck && mkdir -p /tmp/ipkcheck
           tar xzf "$ipk" -C /tmp/ipkcheck ./data.tar.gz
-          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./usr/lib/cf-speedtest/cfspeedtest/engine.py$' \
+          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./usr/lib/cfpick/cfpick/engine.py$' \
             || { echo "standalone engine missing from $ipk"; exit 1; }
-          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./usr/bin/cfst$' \
-            || { echo "cfst wrapper missing from $ipk"; exit 1; }
-          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./www/cfst/cgi-bin/api$' \
+          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./usr/bin/cfpick$' \
+            || { echo "cfpick wrapper missing from $ipk"; exit 1; }
+          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./www/cfpick/cgi-bin/api$' \
             || { echo "console CGI missing from $ipk"; exit 1; }
           echo "standalone engine present in $ipk"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: LuCI-Package-${{ steps.get_version.outputs.version }}
+          name: CFPick-${{ steps.get_version.outputs.version }}
           path: artifacts
 
       - name: Create Release
@@ -146,5 +146,5 @@ jobs:
         with:
           files: |
             ./artifacts/*
-          name: Release ${{ github.ref_name }}
+          name: CFPick ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}

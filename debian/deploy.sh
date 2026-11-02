@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# cf-speedtest Debian/Ubuntu one-click deployer.
+# cfpick Debian/Ubuntu one-click deployer.
 #
 #   sudo bash deploy.sh
 #   sudo bash deploy.sh --core all
 #   sudo bash deploy.sh --listen 0.0.0.0 --token "$(openssl rand -hex 24)"
 #   sudo bash deploy.sh --uninstall
 #
-# The source checkout lives in /opt/cf-speedtest-src and is managed by this
-# script; the installed program lives in /opt/cf-speedtest.  Existing
-# /etc/cf-speedtest/config.json is never overwritten.
+# The source checkout lives in /opt/cfpick-src and is managed by this
+# script; the installed program lives in /opt/cfpick.  Existing
+# /etc/cfpick/config.json is never overwritten.
 set -Eeuo pipefail
 
-REPO="${CFST_REPO:-https://github.com/urbanescavenger/luci-app-passwall-speedtest.git}"
-BRANCH="${CFST_BRANCH:-DB}"
-SRC_DIR="${CFST_SRC_DIR:-/opt/cf-speedtest-src}"
+REPO="${CFPICK_REPO:-https://github.com/urbanescavenger/CFPick.git}"
+BRANCH="${CFPICK_BRANCH:-main}"
+SRC_DIR="${CFPICK_SRC_DIR:-/opt/cfpick-src}"
 CORE="mihomo"
 CORE_EXPLICIT=0
 LISTEN=""
@@ -28,15 +28,15 @@ die()  { printf '[deploy] 错误: %s\n' "$*" >&2; exit 1; }
 
 usage() {
     cat <<'EOF'
-cf-speedtest Debian/Ubuntu 一键部署
+cfpick Debian/Ubuntu 一键部署
 
 用法: sudo bash deploy.sh [选项]
 
 选项:
   --core mihomo|xray|all|none   安装/升级的内核（默认当前内核；已安装时跳过）
-  --branch NAME                 源码分支（默认 DB）
+  --branch NAME                 源码分支（默认 main）
   --repo URL                    仓库地址
-  --dir PATH                    源码目录（默认 /opt/cf-speedtest-src）
+  --dir PATH                    源码目录（默认 /opt/cfpick-src）
   --listen ADDR                 Web 监听地址（默认沿用配置，初始 127.0.0.1）
   --port PORT                   Web 端口（默认沿用配置，初始 8787）
   --token TOKEN                 Web 访问令牌
@@ -98,8 +98,8 @@ is_loopback() {
 }
 
 core_installed() {
-    # Ask cfst so a custom core.paths entry counts as installed too.
-    cfst cores </dev/null 2>/dev/null | python3 -c '
+    # Ask cfpick so a custom core.paths entry counts as installed too.
+    cfpick cores </dev/null 2>/dev/null | python3 -c '
 import json
 import sys
 
@@ -115,12 +115,12 @@ sys.exit(0 if data.get("cores", {}).get(target, {}).get("installed") else 1)
 # ── uninstall: use the installed copy when possible ─────────────────────
 if [ "$UNINSTALL" = 1 ]; then
     script=""
-    if [ -x /opt/cf-speedtest/uninstall.sh ]; then
-        script=/opt/cf-speedtest/uninstall.sh
+    if [ -x /opt/cfpick/uninstall.sh ]; then
+        script=/opt/cfpick/uninstall.sh
     elif [ -f "$SRC_DIR/debian/uninstall.sh" ]; then
         script="$SRC_DIR/debian/uninstall.sh"
     else
-        die "找不到卸载脚本（/opt/cf-speedtest/uninstall.sh 或 $SRC_DIR/debian/uninstall.sh）"
+        die "找不到卸载脚本（/opt/cfpick/uninstall.sh 或 $SRC_DIR/debian/uninstall.sh）"
     fi
     log "卸载: $script"
     if [ "$PURGE" = 1 ]; then
@@ -173,28 +173,28 @@ fi
 [ -f "$SRC_DIR/debian/install.sh" ] || die "源码不完整：找不到 $SRC_DIR/debian/install.sh"
 
 # ── install / upgrade ───────────────────────────────────────────────────
-log "安装/更新 cf-speedtest 到 /opt/cf-speedtest（保留已有配置）"
+log "安装/更新 cfpick 到 /opt/cfpick（保留已有配置）"
 sh "$SRC_DIR/debian/install.sh" </dev/null
 
 # ── optional web overrides ──────────────────────────────────────────────
 if [ -n "$LISTEN" ] || [ -n "$PORT" ] || [ -n "$TOKEN" ]; then
-    [ -f /etc/cf-speedtest/config.json ] || die "配置文件不存在：/etc/cf-speedtest/config.json"
+    [ -f /etc/cfpick/config.json ] || die "配置文件不存在：/etc/cfpick/config.json"
     log "更新 Web 配置（listen / port / token）"
-    CFST_LISTEN="$LISTEN" CFST_PORT="$PORT" CFST_TOKEN="$TOKEN" python3 - <<'PY'
+    CFPICK_LISTEN="$LISTEN" CFPICK_PORT="$PORT" CFPICK_TOKEN="$TOKEN" python3 - <<'PY'
 import json
 import os
 import tempfile
 
-path = "/etc/cf-speedtest/config.json"
+path = "/etc/cfpick/config.json"
 with open(path, "r", encoding="utf-8") as handle:
     cfg = json.load(handle)
 web = cfg.setdefault("web", {})
-if os.environ.get("CFST_LISTEN"):
-    web["listen"] = os.environ["CFST_LISTEN"]
-if os.environ.get("CFST_PORT"):
-    web["port"] = int(os.environ["CFST_PORT"])
-if os.environ.get("CFST_TOKEN"):
-    web["token"] = os.environ["CFST_TOKEN"]
+if os.environ.get("CFPICK_LISTEN"):
+    web["listen"] = os.environ["CFPICK_LISTEN"]
+if os.environ.get("CFPICK_PORT"):
+    web["port"] = int(os.environ["CFPICK_PORT"])
+if os.environ.get("CFPICK_TOKEN"):
+    web["token"] = os.environ["CFPICK_TOKEN"]
 
 fd, tmp = tempfile.mkstemp(prefix=".config.", dir=os.path.dirname(path))
 with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -208,7 +208,7 @@ PY
 fi
 
 if [ "$HAS_SYSTEMD" = 1 ]; then
-    systemctl restart cf-speedtest-web.service </dev/null
+    systemctl restart cfpick-web.service </dev/null
 fi
 
 # ── proxy cores ─────────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ if [ "$CORE" != "none" ]; then
         CORE="$(python3 - <<'PY' 2>/dev/null || echo mihomo
 import json
 try:
-    with open("/etc/cf-speedtest/config.json", "r", encoding="utf-8") as handle:
+    with open("/etc/cfpick/config.json", "r", encoding="utf-8") as handle:
         print(json.load(handle).get("core", {}).get("type", "mihomo"))
 except Exception:
     print("mihomo")
@@ -235,7 +235,7 @@ PY
         all) targets="mihomo xray" ;;
         *) targets="$CORE" ;;
     esac
-    command -v cfst >/dev/null 2>&1 || die "cfst 未安装成功，无法安装内核"
+    command -v cfpick >/dev/null 2>&1 || die "cfpick 未安装成功，无法安装内核"
 
     for target in $targets; do
         if [ "$CORE_EXPLICIT" = 0 ] && core_installed "$target"; then
@@ -245,7 +245,7 @@ PY
         ok=0
         for attempt in 1 2 3; do
             log "安装/升级 $target 内核（第 $attempt/3 次）"
-            if cfst update-core --type "$target" </dev/null; then
+            if cfpick update-core --type "$target" </dev/null; then
                 ok=1
                 break
             fi
@@ -263,7 +263,7 @@ fi
 mapfile -t WEB_CONF < <(python3 - <<'PY'
 import json
 try:
-    with open("/etc/cf-speedtest/config.json", "r", encoding="utf-8") as handle:
+    with open("/etc/cfpick/config.json", "r", encoding="utf-8") as handle:
         web = json.load(handle).get("web", {})
 except Exception:
     web = {}
@@ -296,18 +296,18 @@ if [ "$HAS_SYSTEMD" = 1 ]; then
         log "Web 健康检查通过"
     else
         warn "Web 健康检查失败；最近日志："
-        journalctl -u cf-speedtest-web.service -n 50 --no-pager </dev/null || true
+        journalctl -u cfpick-web.service -n 50 --no-pager </dev/null || true
         CORE_FAILED=1
     fi
 else
     warn "未检测到 systemd，Web 服务未自动启动；可手动运行："
-    warn "  cd /opt/cf-speedtest && CFST_APP_DIR=/opt/cf-speedtest PYTHONPATH=/opt/cf-speedtest python3 -m cfspeedtest serve"
+    warn "  cd /opt/cfpick && CFPICK_APP_DIR=/opt/cfpick PYTHONPATH=/opt/cfpick python3 -m cfpick serve"
 fi
 
 CFG_TOKEN="$(python3 - <<'PY' 2>/dev/null || true
 import json
 try:
-    with open("/etc/cf-speedtest/config.json", "r", encoding="utf-8") as handle:
+    with open("/etc/cfpick/config.json", "r", encoding="utf-8") as handle:
         print(json.load(handle).get("web", {}).get("token", ""))
 except Exception:
     print("")
@@ -317,12 +317,12 @@ PY
 cat <<EOF
 
 [deploy] 完成
-  程序目录 : /opt/cf-speedtest
+  程序目录 : /opt/cfpick
   源码目录 : $SRC_DIR
-  配置文件 : /etc/cf-speedtest/config.json
-  结果目录 : /var/lib/cf-speedtest
-  日志     : journalctl -u cf-speedtest-web -f
-  命令     : cfst status | cfst cores | cfst run start
+  配置文件 : /etc/cfpick/config.json
+  结果目录 : /var/lib/cfpick
+  日志     : journalctl -u cfpick-web -f
+  命令     : cfpick status | cfpick cores | cfpick run start
 EOF
 
 if is_loopback "$CFG_LISTEN"; then

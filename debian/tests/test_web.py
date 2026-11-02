@@ -31,18 +31,18 @@ class WebTests(unittest.TestCase):
         cls.base_url = "http://127.0.0.1:%d" % cls.port
         env = os.environ.copy()
         env.update({
-            "CFST_APP_DIR": str(ROOT),
-            "CFST_STATE_DIR": str(base / "state"),
-            "CFST_CONFIG_DIR": str(base / "etc"),
-            "CFST_CONFIG": str(base / "etc" / "config.json"),
-            "CFST_LOG_DIR": str(base / "log"),
-            "CFST_SRC_DIR": str(base / "no-source-checkout"),
-            "CFST_SKIP_CRON": "1",
+            "CFPICK_APP_DIR": str(ROOT),
+            "CFPICK_STATE_DIR": str(base / "state"),
+            "CFPICK_CONFIG_DIR": str(base / "etc"),
+            "CFPICK_CONFIG": str(base / "etc" / "config.json"),
+            "CFPICK_LOG_DIR": str(base / "log"),
+            "CFPICK_SRC_DIR": str(base / "no-source-checkout"),
+            "CFPICK_SKIP_CRON": "1",
             "PYTHONPATH": str(ROOT),
             "PYTHONUNBUFFERED": "1",
         })
         cls.proc = subprocess.Popen(
-            [sys.executable, "-m", "cfspeedtest", "serve",
+            [sys.executable, "-m", "cfpick", "serve",
              "--listen", "127.0.0.1", "--port", str(cls.port)],
             cwd=str(ROOT), env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -155,7 +155,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("Cloudflare", text)
         status, text = self.request("/app.js")
         self.assertEqual(status, 200)
-        self.assertIn("cf-speedtest", text)
+        self.assertIn("cfpick", text)
         status, body = self.request("/vendor/chart.js")
         self.assertEqual(status, 200)
         self.assertIn("Chart.js", body[:200])
@@ -244,17 +244,17 @@ class WebTests(unittest.TestCase):
             status, _ = self.request("/api/status")
             self.assertEqual(status, 401)
             status, data = self.request("/api/status",
-                                        headers={"X-CFST-Token": "test-secret"})
+                                        headers={"X-CFPICK-Token": "test-secret"})
             self.assertEqual(status, 200)
             status, data = self.request("/api/status?token=test-secret")
             self.assertEqual(status, 200)
             status, data = self.request("/api/status",
-                                        headers={"X-CFST-Token": "wrong"})
+                                        headers={"X-CFPICK-Token": "wrong"})
             self.assertEqual(status, 401)
         finally:
             status, _ = self.request("/api/config", method="POST",
                                      payload={"config": cfg},
-                                     headers={"X-CFST-Token": "test-secret"})
+                                     headers={"X-CFPICK-Token": "test-secret"})
             self.assertEqual(status, 200)
 
 

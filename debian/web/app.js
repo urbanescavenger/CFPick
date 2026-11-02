@@ -1,4 +1,4 @@
-/* cf-speedtest web UI — vanilla JS, no build step. */
+/* cfpick web UI — vanilla JS, no build step. */
 (function () {
 	'use strict';
 
@@ -6,7 +6,7 @@
 	const $$ = (selector, root) => Array.from((root || document).querySelectorAll(selector));
 
 	const state = {
-		token: localStorage.getItem('cfst_token') || '',
+		token: localStorage.getItem('cfpick_token') || '',
 		config: null,
 		status: null,
 		core: null,
@@ -63,7 +63,7 @@
 		const opts = Object.assign({}, options || {});
 		opts.headers = Object.assign({}, opts.headers || {});
 		if (state.token)
-			opts.headers['X-CFST-Token'] = state.token;
+			opts.headers['X-CFPICK-Token'] = state.token;
 		if (opts.body && typeof opts.body !== 'string') {
 			opts.body = JSON.stringify(opts.body);
 			opts.headers['Content-Type'] = 'application/json';
@@ -1042,8 +1042,8 @@
 			const oldToken = state.token;
 			state.config = response.config;
 			state.token = (response.config.web && response.config.web.token) || '';
-			if (state.token) localStorage.setItem('cfst_token', state.token);
-			else localStorage.removeItem('cfst_token');
+			if (state.token) localStorage.setItem('cfpick_token', state.token);
+			else localStorage.removeItem('cfpick_token');
 			$('#dl-log').href = withToken('/api/export/log');
 			state.nodeInfo = (await api('/api/nodes')).nodes || [];
 			renderNodes();
@@ -1179,7 +1179,7 @@
 			pathInput.type = 'text';
 			pathInput.spellcheck = false;
 			pathInput.dataset.corePath = type;
-			pathInput.placeholder = '/var/lib/cf-speedtest/core/' + type;
+			pathInput.placeholder = '/var/lib/cfpick/core/' + type;
 			pathInput.value = ((state.config && state.config.core && state.config.core.paths) || {})[type] || '';
 			pathInput.addEventListener('input', () => {
 				if (!state.config.core.paths) state.config.core.paths = {};
@@ -1478,7 +1478,7 @@
 				return;
 			}
 			state.token = token;
-			localStorage.setItem('cfst_token', token);
+			localStorage.setItem('cfpick_token', token);
 			try {
 				await loadAll();
 				hideAuth();

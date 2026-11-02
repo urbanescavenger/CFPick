@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cfspeedtest import core, links
-from cfspeedtest.miniyaml import dumps
+from cfpick import core, links
+from cfpick.miniyaml import dumps
 
 
 class MiniYamlTests(unittest.TestCase):
@@ -14,19 +14,19 @@ class MiniYamlTests(unittest.TestCase):
         text = dumps({
             "socks-port": 48900,
             "proxies": [{
-                "name": "cfst",
+                "name": "cfpick",
                 "type": "vless",
                 "server": "1.2.3.4",
                 "reality-opts": {"public-key": "abc", "short-id": "12"},
                 "udp": True,
             }],
-            "rules": ["MATCH,cfst"],
+            "rules": ["MATCH,cfpick"],
         })
         self.assertIn("socks-port: 48900", text)
         self.assertIn('server: "1.2.3.4"', text)
         self.assertIn('public-key: "abc"', text)
-        self.assertIn("- name: \"cfst\"", text)
-        self.assertIn("- \"MATCH,cfst\"", text)
+        self.assertIn("- name: \"cfpick\"", text)
+        self.assertIn("- \"MATCH,cfpick\"", text)
 
 
 class CoreConfigTests(unittest.TestCase):
@@ -39,8 +39,8 @@ class CoreConfigTests(unittest.TestCase):
         payload = core.build_config(proxy, 48900)
         self.assertEqual(payload["socks-port"], 48900)
         self.assertEqual(payload["proxies"][0]["server"], "9.9.9.9")
-        self.assertEqual(payload["proxies"][0]["name"], "cfst")
-        self.assertEqual(payload["rules"], ["MATCH,cfst"])
+        self.assertEqual(payload["proxies"][0]["name"], "cfpick")
+        self.assertEqual(payload["rules"], ["MATCH,cfpick"])
         # PassWall on OpenWrt returns packets carrying this mark, so the test
         # core is not proxied a second time by the router's global node.
         self.assertEqual(payload["routing-mark"], 255)
@@ -70,7 +70,7 @@ class CoreConfigTests(unittest.TestCase):
         import os
         from unittest import mock
         proxy = self.parsed.proxy_for_ip("9.9.9.9")
-        with mock.patch.dict(os.environ, {"CFST_MARK": "0"}):
+        with mock.patch.dict(os.environ, {"CFPICK_MARK": "0"}):
             xray = core.build_config(proxy, 48900, core_type="xray")
             self.assertNotIn("sockopt", xray["outbounds"][0]["streamSettings"])
             mihomo = core.build_config(proxy, 48900)

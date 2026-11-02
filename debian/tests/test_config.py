@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cfspeedtest import config, paths
+from cfpick import config, paths
 
 
 class NormalizeTests(unittest.TestCase):

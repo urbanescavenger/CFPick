@@ -1,13 +1,18 @@
-# luci-app-passwall-speedtest
+# CFPick
 
-[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/urbanescavenger/luci-app-passwall-speedtest/build.yml?style=for-the-badge&logo=GitHub)](https://github.com/urbanescavenger/luci-app-passwall-speedtest/actions/workflows/build.yml)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/urbanescavenger/luci-app-passwall-speedtest?style=for-the-badge)](https://github.com/urbanescavenger/luci-app-passwall-speedtest/releases)
+[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/urbanescavenger/CFPick/build.yml?style=for-the-badge&logo=GitHub)](https://github.com/urbanescavenger/CFPick/actions/workflows/build.yml)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/urbanescavenger/CFPick?style=for-the-badge)](https://github.com/urbanescavenger/CFPick/releases)
 
 [English](README.md)
 
-**luci-app-passwall-speedtest** 是一个用于 OpenWrt 的 LuCI 插件：**通过你已有的 [PassWall](https://github.com/xiaorouji/openwrt-passwall) 节点**优选 Cloudflare IP。它把每个候选 IP 临时写进一个 passwall 节点的 `address`，用 passwall 拉起本地 SOCKS：先用 `curl -I` 取 `time_pretransfer` 对全部候选做延迟初筛，再对每个 worker 延迟最优的 N 个 IP 经同一条节点链路**真实下载固定大小文件**、按实测吞吐（MB/s）选出最终最优；测完把最优 IP 写回 passwall 节点及其它集成。
+**CFPick** 是一个 Cloudflare / CDN 优选 IP 工具，提供两种部署方式：
 
-> 这是对原 `luci-app-cloudflarespeedtest` 的重构：**已移除独立 CloudflareSpeedTest 二进制的下载与依赖**，测速完全经由 passwall 完成，不再下载或内置任何外部测速二进制。测速分两阶段：便宜的延迟初筛覆盖全部候选，真实下载只测最有希望的少量候选。
+*   **OpenWrt LuCI 插件**（`luci-app-cfpick`）：经你已有的 [PassWall](https://github.com/xiaorouji/openwrt-passwall) 节点，或本机 mihomo / Xray-core 内核，对候选 Cloudflare IP 做两阶段测速，把最优 IP 写回代理节点和 DNS 集成。
+*   **Debian / Ubuntu 脚本版**（[`debian/`](debian/README.md)）：不依赖 OpenWrt 和 PassWall，自带两个可切换、可独立升级的代理内核、Python 标准库引擎与 Web 面板。
+
+测速流程：把每个候选 IP 临时写进一个节点（或交给本机内核），用本地 SOCKS 发起 `curl -I` 取 `time_pretransfer` 对全部候选做延迟初筛；再对每个 worker 延迟最优的 N 个 IP 经同一条链路**真实下载固定大小文件**，按实测吞吐（MB/s）选出最终最优，最后写回节点及其它集成。
+
+> **改名说明**：项目原名 `luci-app-cloudflarespeedtest`，后改为 `luci-app-passwall-speedtest`；从 **1.0.0** 起统一更名为 **CFPick**。包名 `luci-app-cfpick`，UCI 配置 `/etc/config/cfpick`，CLI `cfpick`。旧配置不会自动迁移，升级后请在 LuCI 重新配置。
 
 ## 依赖
 
@@ -19,7 +24,7 @@
 
 *   **走节点测速**：经你的 passwall 节点链路探测候选 Cloudflare IP——选出的是「从你代理出口看」最优的 CF IP。
 *   **延迟初筛 + 真实下载实测**：先对全部候选测延迟（便宜、覆盖广），**等所有 worker 停止探测后**，再由主进程对每个 worker 延迟最优的前 N 个 IP（默认 5 个，最多 10 个）经同一节点链路**逐节点、逐 IP 串行**下载固定大小文件，用 curl 的 `speed_download` 换算 MB/s。最终按实测下载速度选最优；下载失败的 IP 剔除；若全部下载失败（如测试 URL 经该节点不可达）则回退到延迟排序，不丢延迟阶段成果。每个 IP 使用独立的 SOCKS 配置，下载前会校验 `/tmp/etc/passwall/<flag>.json` 里的出站地址确实是该候选 IP，避免测到与候选 IP 无关的速度。下载与延迟探测不重叠——否则仍在探测的 worker 会与下载互抢路由器 WAN 带宽，各 IP 的速度没有可比性。**快速死亡**：起测 5 秒内下载不足 1 MB 的候选会被立即中止并判失败（curl `--speed-limit`/`--speed-time`），死 IP / 爬行 IP 不再白等满单 IP 时限。迭代模式下下载实测是收敛结束后的额外阶段，不计入 `iterate_minutes`。
-*   **复测现有最优 IP**：主设置页新增「复测现有最优 IP」按钮（CLI：`passwall-speedtest.sh retest`）——**不重新下载在线 IP 列表**，只取当前 `result.csv` 中该节点的行 + 节点当前 `address`。候选来源与调度方式相互独立：默认做一轮延迟测速 + 下载实测；若同时开启「限时迭代测速」，同一批候选会进入各节点的收敛循环直到 `iterate_minutes` 结束，每轮剔除未通过的 IP。结束后照常写回。适合定时跑完后快速确认现有最优是否仍然可用、或在不拉取上万条候选的情况下重新排序。
+*   **复测现有最优 IP**：主设置页新增「复测现有最优 IP」按钮（CLI：`/usr/lib/cfpick/bin/cfpick.sh retest`）——**不重新下载在线 IP 列表**，只取当前 `result.csv` 中该节点的行 + 节点当前 `address`。候选来源与调度方式相互独立：默认做一轮延迟测速 + 下载实测；若同时开启「限时迭代测速」，同一批候选会进入各节点的收敛循环直到 `iterate_minutes` 结束，每轮剔除未通过的 IP。结束后照常写回。适合定时跑完后快速确认现有最优是否仍然可用、或在不拉取上万条候选的情况下重新排序。
 *   **多线程 worker**：在「第三方设置」里选的 passwall 节点作为并行 worker——每个 worker 经自己的链路测全部候选 IP、各写各的最优 IP；并发上限由 `node_test_threads` 控制。
 *   **多探测 fail-fast**：每个 IP 探测 `node_test_probes` 次；任意一次失败该 IP 立即丢弃。只有全部探测都成功的 IP 才保留，确保结果稳定。
 *   **限时迭代测速**：开启 `iterate_enabled` 后进入计时模式——每个待测节点跑**独立的收敛循环**直到 `iterate_minutes` 分钟：第 1 遍测完自己的候选后，每遍只测上一遍通过的 IP，候选池逐遍收敛到最稳定、延迟最低的 IP；运行期间不写 result.csv、不写回 passwall。节点候选收敛到 **≤N 个**即保存结果提前结束（N 复用 `download_test_count`，收敛后的候选恰好就是接下来下载实测的那批；下载实测关闭时为 3 个），不必等到计时结束；结束时日志打出各节点最终轮的完整测速结果，随后一次性写回各节点最优。
@@ -28,27 +33,27 @@
 *   **优化的界面与日志**：重新设计的状态展示；逐 IP 日志如 `进度: 走节点测速 [节点] 5/30 (16%) - 1.2.3.4 延迟 87ms 丢包 0.00 [保留]`。
 *   **中途停止不丢结果**：中途停止会触发 trap 清理 SOCKS、恢复节点 address，若无新结果则保留上一次结果。**用户手动停止第一轮时，已通过延迟的 IP 仍会完成下载实测**（每 worker 最多 `download_test_count` 个（上限 10）；所有 worker 停止探测后逐节点逐 IP 串行）后再写回；「首个 worker 已完成、其余自动提前停止」也一样，不再跳过其余 worker 的下载。
 *   **丰富的应用集成**：优选 IP 可自动应用到 SSR+ / Passwall / PassWall2 / Bypass / Vssr / HOST / MosDNS / astra-dns / 阿里云 DDNS。
-*   **独立内核测速（2.1）**：统一测速可切换到本机 mihomo / Xray-core 内核（同一套节点、IP 列表和参数），内核可独立安装/升级；启用后不再依赖 `run_socks`，也不需要改写 PassWall 节点。
+*   **独立内核测速**：统一测速可切换到本机 mihomo / Xray-core 内核（同一套节点、IP 列表和参数），内核可独立安装/升级；启用后不再依赖 `run_socks`，也不需要改写 PassWall 节点。
 
 ## 界面页面
 
-插件在 LuCI → 服务 → PassWall Speed Test 下只有两个入口，和 Lucky 的布局一致：
+插件在 LuCI → 服务 → CFPick 下只有两个入口，和 Lucky 的布局一致：
 
-*   **操作台（Console）**：显示测速运行状态、Web 操作台地址，以及「打开 Web 操作台」按钮；实际操作都在独立操作台里完成。2.1 新增的「独立测速」页签也在操作台内。
+*   **操作台（Console）**：显示测速运行状态、Web 操作台地址，以及「打开 Web 操作台」按钮；实际操作都在独立操作台里完成，「独立测速」页签也在操作台内。
 *   **设置（Settings）**：只保留 Web 操作台入口配置：启用、端口、监听地址、用户名、会话有效期、打开操作台、重置密码。所有测速设置和操作都在独立操作台的页签里。
 
 ## 独立 Web 操作台
 
-独立操作台（`cfst-web`）在单独端口运行，有自己的登录和管理界面；LuCI 的「设置」只保留操作台入口配置，所有测速设置和操作都在操作台里。
+独立操作台（`cfpick-web`）在单独端口运行，有自己的登录和管理界面；LuCI 的「设置」只保留操作台入口配置，所有测速设置和操作都在操作台里。
 
 ### 启用
 
-1. LuCI → 服务 → PassWall Speed Test → **设置 → Web 操作台**；
+1. LuCI → 服务 → CFPick → **设置 → Web 操作台**；
 2. 勾选「启用独立操作台」，设置端口（默认 **17544**，避开 Lucky 常用的 17543）、监听地址和用户名；
 3. 保存并应用，服务会自动启动；
 4. 浏览器打开 `http://<路由器IP>:17544/`，首次会要求创建管理员密码（至少 6 位）。
 
-密码只以加盐 SHA-256 哈希保存在 UCI（`passwall-speedtest.global.web_password`），不保存明文；会话 Cookie 为 `HttpOnly` + `SameSite=Strict`，写操作还要求自定义请求头，防止 CSRF。
+密码只以加盐 SHA-256 哈希保存在 UCI（`cfpick.global.web_password`），不保存明文；会话 Cookie 为 `HttpOnly` + `SameSite=Strict`，写操作还要求自定义请求头，防止 CSRF。
 
 ### 操作台页签
 
@@ -66,29 +71,29 @@
 *   修改密码：操作台「设置 → 操作台账号」，修改后需要重新登录。
 *   忘记密码：SSH 执行
     ```sh
-    uci delete passwall-speedtest.global.web_password
-    uci commit passwall-speedtest
-    /etc/init.d/cfst-web restart
+    uci delete cfpick.global.web_password
+    uci commit cfpick
+    /etc/init.d/cfpick-web restart
     ```
     然后重新打开操作台创建密码。
 *   操作台默认只建议在局域网使用（明文 HTTP）；远程访问请走 VPN 或带 TLS 的反向代理，不要把 17544 直接暴露到公网。
-*   服务脚本：`/etc/init.d/cfst-web`；端口、监听地址、用户名由 UCI 的 `web_port` / `web_bind` / `web_user` 控制，保存配置会触发服务重载。
+*   服务脚本：`/etc/init.d/cfpick-web`；端口、监听地址、用户名由 UCI 的 `web_port` / `web_bind` / `web_user` 控制，保存配置会触发服务重载。
 
 ## 独立内核模式（统一测速的可选项）
 
-2.1 起可以在操作台的 **「独立测速」** 页签里，把**统一测速**切换到本机 mihomo / Xray-core：
+可以在操作台的 **「独立测速」** 页签里，把**统一测速**切换到本机 mihomo / Xray-core：
 
-*   **启用开关**：勾选「启用独立内核」并保存。启用后，「开始测速」的每个 worker 用本机内核拉起候选 IP 的本地 SOCKS（`cfst core start`），不再调用 PassWall 的 `run_socks`；关闭则完全保持原来的 PassWall 流程。
+*   **启用开关**：勾选「启用独立内核」并保存。启用后，「开始测速」的每个 worker 用本机内核拉起候选 IP 的本地 SOCKS（`cfpick core start`），不再调用 PassWall 的 `run_socks`；关闭则完全保持原来的 PassWall 流程。
 *   **同一套配置**：节点仍是「节点」页里的 PassWall worker，IP 列表、探测/下载参数、定时任务都不变；不需要第二套节点或分享链接。
-*   **双内核 + 自助升级**：mihomo 与 Xray-core 二选一；页签按内核各显示一张卡片（版本、路径、来源、当前使用状态），可填版本标签后单独「安装/升级」到 `/etc/cf-speedtest/state/core`（独立于 PassWall 的内核），也可继续复用系统 `/usr/bin/mihomo`、`/usr/bin/xray`。
+*   **双内核 + 自助升级**：mihomo 与 Xray-core 二选一；页签按内核各显示一张卡片（版本、路径、来源、当前使用状态），可填版本标签后单独「安装/升级」到 `/etc/cfpick/state/core`（独立于 PassWall 的内核），也可继续复用系统 `/usr/bin/mihomo`、`/usr/bin/xray`。
 *   **不碰 PassWall**：独立模式下测速期间不改写节点 `address`、不切换全局节点；内核出站带 `mark 255`，命中 PassWall OUTPUT 链的 `meta mark 255 return`，保持「本地 SOCKS → 被测节点」单层，**不需要修改 PassWall 配置**。节点类型与所选内核不兼容（如 ss/hysteria2、带 plugin 的 SS、VMess xhttp 选 mihomo 等）时，该节点自动回退 PassWall `run_socks`，并在日志里说明。
 *   **写回**：测完仍按原逻辑把各 worker 的最优 IP 写回 PassWall 节点；如果节点配置了 DDNS 域名，则该节点只写 DNS、不回写（见下）。
 *   **CLI**：
     ```sh
-    cfst cores
-    cfst update-core --type xray|mihomo|all
-    cfst core start --node <id> --ip <candidate> --port <socks> --core xray --flag <flag>
-    cfst core stop --flag <flag>
+    cfpick cores
+    cfpick update-core --type xray|mihomo|all
+    cfpick core start --node <id> --ip <candidate> --port <socks> --core xray --flag <flag>
+    cfpick core stop --flag <flag>
     ```
 *   **依赖**：`python3-light`、`python3-urllib`、`python3-codecs`、`python3-openssl`、`python3-email`、`curl`、`ca-bundle`（由 ipk 自动安装）。
 
@@ -101,7 +106,7 @@
 
 ## 管理 API
 
-rpcd 对象 `passwall-speedtest` 同时提供两套方法：
+rpcd 对象 `cfpick` 同时提供两套方法：
 
 *   **旧方法**（`status` / `start` / `start_retest` / `stop` / `get_log` / `get_history` / `get_best_result` / `list_nodes`）保持原有返回结构，已有页面和脚本不受影响。
 *   **`api_*` 稳定接口**：统一返回信封，异常也会变成正常响应，便于外部脚本消费：
@@ -130,9 +135,9 @@ rpcd 对象 `passwall-speedtest` 同时提供两套方法：
 示例：
 
 ```sh
-ubus call passwall-speedtest api_status
-ubus call passwall-speedtest api_results '{"limit":500}'
-ubus call passwall-speedtest api_tasks
+ubus call cfpick api_status
+ubus call cfpick api_results '{"limit":500}'
+ubus call cfpick api_tasks
 ```
 
 通过 LuCI/rpcd 会话访问的外部应用需要在 ACL 中获得对应方法的 read/write 权限；以 root 直接执行 `ubus call` 不受 ACL 限制。本插件自带的 ACL 已包含全部 `api_*` 方法。
@@ -168,26 +173,26 @@ ubus call passwall-speedtest api_tasks
 
 内置 cron 调度，支持按 1~24 小时间隔运行，或填写自定义 cron 表达式。`init.d` 脚本以幂等方式按需更新 crontab，不会重复写入。
 
-操作台「概览 → 定时任务」只显示与本插件相关的 crontab 行，可直接修改五段计划、启用/停用、删除，或添加 `start` / `retest` / `test` / `replace` 任务。`start` 主任务仍由设置页与 UCI 维护，改它会同步回设置；其余相关任务直接写入 `/etc/crontabs/root`。停用不会删除该行，而是加上 `# [cfst-disabled]` 前缀注释，随时可以恢复。
+操作台「概览 → 定时任务」只显示与本插件相关的 crontab 行，可直接修改五段计划、启用/停用、删除，或添加 `start` / `retest` / `test` / `replace` 任务。`start` 主任务仍由设置页与 UCI 维护，改它会同步回设置；其余相关任务直接写入 `/etc/crontabs/root`。停用不会删除该行，而是加上 `# [cfpick-disabled]` 前缀注释，随时可以恢复。
 
 每次整跑在入口持有一把单实例锁：同一时刻只允许一次完整运行，重叠触发（定时任务重叠、页面连点、SSH 手敲）会被**跳过并记一行日志**，不会两套 worker 去抢同一批 passwall 节点、互删中间状态。锁的持有者被 kill -9 / 断电带走时留下的残留锁，会在下次运行时自动接管。自定义 cron 注意分钟字段别写 `*`（`* 19 * * 4` 是「周四 19 点内每分钟一次」，要一次请写 `0 19 * * 4`）。
 
 ## 结果与历史
 
-测速结果保存在 `/tmp/passwall-speedtest/result.csv`，滚动保留 10 个历史版本；Best IP 区按节点分组全量展示。第 6 列 `下载速度(MB/s)` 为真实下载实测值——只对每个 worker 延迟最优的前 N 个 IP 填写，未测到或未启用下载测速的行保持 `0.00`。延迟图表取持久历史绘制。
+测速结果保存在 `/tmp/cfpick/result.csv`，滚动保留 10 个历史版本；Best IP 区按节点分组全量展示。第 6 列 `下载速度(MB/s)` 为真实下载实测值——只对每个 worker 延迟最优的前 N 个 IP 填写，未测到或未启用下载测速的行保持 `0.00`。延迟图表取持久历史绘制。
 
-运行日志保存在 `/tmp/passwall-speedtest.log`，每次运行开始时把上次日志滚动归档为 `.log.1` ~ `.log.5`（最近 5 次，`/tmp` 内存盘重启即清、不写 flash）。此外每次运行结束时把本次完整日志**覆盖**到 `/etc/config/passwall-speedtest.log`（与 UCI 配置文件同目录，持久保存、重启不丢，只保留最近一次运行）。日志页整行显示，含 `[节点备注名]` 与 `[保留]/[丢弃]` 标签，可直接按节点核对迭代轮次。
+运行日志保存在 `/tmp/cfpick.log`，每次运行开始时把上次日志滚动归档为 `.log.1` ~ `.log.5`（最近 5 次，`/tmp` 内存盘重启即清、不写 flash）。此外每次运行结束时把本次完整日志**覆盖**到 `/etc/config/cfpick.log`（与 UCI 配置文件同目录，持久保存、重启不丢，只保留最近一次运行）。日志页整行显示，含 `[节点备注名]` 与 `[保留]/[丢弃]` 标签，可直接按节点核对迭代轮次。
 
 ## 安装与使用
 
-1.  从 [Releases](https://github.com/urbanescavenger/luci-app-passwall-speedtest/releases) 页面下载最新的 `.ipk` 或 `.apk` 文件。
+1.  从 [Releases](https://github.com/urbanescavenger/CFPick/releases) 页面下载最新的 `.ipk` 或 `.apk` 文件。
 2.  上传到路由器并安装：
     ```bash
-    opkg install luci-app-passwall-speedtest_*.ipk
+    opkg install luci-app-cfpick_*.ipk
     ```
     *注：如果安装时提示缺少依赖，请先更新 opkg 源 (`opkg update`)。*
-3.  进入 LuCI 界面 → 服务 → PassWall Speed Test 进行配置。
-    > 从旧版 `luci-app-cloudflarespeedtest` 升级：UCI 配置已改名为 `passwall-speedtest`，旧设置**不会**自动迁移，请在 LuCI 页面重新配置；旧 `/etc/config/cloudflarespeedtest` 可自行删除。
+3.  进入 LuCI 界面 → 服务 → CFPick 进行配置。
+    > **从旧版升级**：包名已改为 `luci-app-cfpick`，UCI 配置改为 `cfpick`，CLI 改为 `cfpick`。旧设置**不会**自动迁移——请先卸载旧包（`opkg remove luci-app-passwall-speedtest` 或 `opkg remove luci-app-cloudflarespeedtest`），安装新包后重新配置；旧 `/etc/config/passwall-speedtest` 可自行删除。
 
 ## 截图
 
@@ -198,31 +203,31 @@ ubus call passwall-speedtest api_tasks
 
 ```bash
 # 仅编译软件包
-make package/luci-app-passwall-speedtest/compile V=99
+make package/luci-app-cfpick/compile V=99
 
 # 编译完整固件
 make menuconfig
-#choose LuCI ---> 3. Applications  ---> <*> luci-app-passwall-speedtest..... for LuCI ----> save
+#choose LuCI ---> 3. Applications  ---> <*> luci-app-cfpick..... for LuCI ----> save
 make V=99
 ```
 
 ## Debian / Ubuntu 独立版
 
-分支 `DB` 提供一套不依赖 OpenWrt/PassWall 的独立实现，位于 [`debian/`](debian/README.md)：自带 **mihomo / Xray-core** 两个可切换、可分别升级的代理内核模块（用节点分享链接测速）、Python3 标准库引擎与 Web 可视化页面，结果导出为 CSV/JSON。
+主分支提供一套不依赖 OpenWrt/PassWall 的独立实现，位于 [`debian/`](debian/README.md)：自带 **mihomo / Xray-core** 两个可切换、可分别升级的代理内核模块（用节点分享链接测速）、Python3 标准库引擎与 Web 可视化页面，结果导出为 CSV/JSON。
 
 一键部署（Debian/Ubuntu）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/urbanescavenger/luci-app-passwall-speedtest/DB/debian/deploy.sh -o /tmp/cfst-deploy.sh
-sudo bash /tmp/cfst-deploy.sh
-rm -f /tmp/cfst-deploy.sh
+curl -fsSL https://raw.githubusercontent.com/urbanescavenger/CFPick/main/debian/deploy.sh -o /tmp/cfpick-deploy.sh
+sudo bash /tmp/cfpick-deploy.sh
+rm -f /tmp/cfpick-deploy.sh
 ```
 
 或手动安装：
 
 ```bash
-git clone -b DB https://github.com/urbanescavenger/luci-app-passwall-speedtest.git
-cd luci-app-passwall-speedtest
+git clone https://github.com/urbanescavenger/CFPick.git
+cd CFPick
 sudo sh debian/install.sh
 ```
 

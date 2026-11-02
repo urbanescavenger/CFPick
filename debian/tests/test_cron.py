@@ -3,15 +3,15 @@
 import unittest
 from unittest import mock
 
-from cfspeedtest import cron
+from cfpick import cron
 
 SAMPLE = """\
 # comment line
 SHELL=/bin/sh
 
-# >>> cf-speedtest >>>
-0 */24 * * * /usr/local/bin/cfst run start >/dev/null 2>&1
-# <<< cf-speedtest <<<
+# >>> cfpick >>>
+0 */24 * * * /usr/local/bin/cfpick run start >/dev/null 2>&1
+# <<< cfpick <<<
 
 @reboot /usr/bin/warmup --flag value
 0 3 * * 4 echo weekly
@@ -31,7 +31,7 @@ class ParseTextTests(unittest.TestCase):
         self.assertEqual(len(managed), 1)
         self.assertEqual(managed[0]["schedule"], "0 */24 * * *")
         self.assertEqual(managed[0]["command"],
-                         "/usr/local/bin/cfst run start >/dev/null 2>&1")
+                         "/usr/local/bin/cfpick run start >/dev/null 2>&1")
 
         reboot = entries[3]
         self.assertEqual((reboot["schedule"], reboot["command"]),
@@ -57,19 +57,19 @@ class ParseTextTests(unittest.TestCase):
 
 class BuildLineTests(unittest.TestCase):
     def test_custom_expression(self):
-        with mock.patch.object(cron, "cli_command", return_value="/usr/local/bin/cfst"):
+        with mock.patch.object(cron, "cli_command", return_value="/usr/local/bin/cfpick"):
             line = cron.build_line({
                 "custom_enabled": True,
                 "custom_cron": "15 4 * * 1",
             })
         self.assertEqual(line,
-                         "15 4 * * 1 /usr/local/bin/cfst run start >/dev/null 2>&1")
+                         "15 4 * * 1 /usr/local/bin/cfpick run start >/dev/null 2>&1")
 
     def test_legacy_hour_interval(self):
-        with mock.patch.object(cron, "cli_command", return_value="/usr/local/bin/cfst"):
+        with mock.patch.object(cron, "cli_command", return_value="/usr/local/bin/cfpick"):
             line = cron.build_line({"custom_enabled": False, "hour": 6})
         self.assertEqual(line,
-                         "0 */6 * * * /usr/local/bin/cfst run start >/dev/null 2>&1")
+                         "0 */6 * * * /usr/local/bin/cfpick run start >/dev/null 2>&1")
 
 
 class ListTasksTests(unittest.TestCase):
@@ -83,13 +83,13 @@ class ListTasksTests(unittest.TestCase):
 
     def test_managed_block(self):
         text = (cron.BEGIN + "\n"
-                "0 3 * * * /usr/local/bin/cfst run start >/dev/null 2>&1\n"
+                "0 3 * * * /usr/local/bin/cfpick run start >/dev/null 2>&1\n"
                 + cron.END + "\n")
         data = self._snapshot(text)
         self.assertTrue(data["installed"])
         self.assertEqual(data["managed"],
                          {"enabled": True,
-                          "line": "0 3 * * * /usr/local/bin/cfst run start "
+                          "line": "0 3 * * * /usr/local/bin/cfpick run start "
                                   ">/dev/null 2>&1"})
         self.assertEqual(len(data["entries"]), 1)
         self.assertTrue(data["entries"][0]["managed"])

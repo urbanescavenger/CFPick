@@ -3,7 +3,6 @@ name: Debian tests
 on:
   push:
     branches:
-      - DB
       - main
     paths:
       - 'debian/**'
@@ -31,7 +30,7 @@ jobs:
           sh -n debian/install.sh
           sh -n debian/uninstall.sh
           sh -n debian/self-update.sh
-          sh -n debian/cfst
+          sh -n debian/bin/cfpick
           bash debian/deploy.sh --help >/dev/null
 
       - name: JavaScript syntax
@@ -40,5 +39,5 @@ jobs:
       - name: Python tests
         run: |
           cd debian
-          PYTHONPATH=. python -m compileall -q cfspeedtest
+          PYTHONPATH=. python -m compileall -q cfpick
           PYTHONPATH=. python -m unittest discover -s tests -v

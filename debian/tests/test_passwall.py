@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from cfspeedtest import core, links, passwall
+from cfpick import core, links, passwall
 
 
 VMESS_XHTTP = {

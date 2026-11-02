@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cfspeedtest import iplists
+from cfpick import iplists
 
 
 class FileListTests(unittest.TestCase):
