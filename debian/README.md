@@ -1,6 +1,6 @@
 # CFPick —— Debian / Ubuntu 独立版
 
-这是 **CFPick** 的 Debian/Ubuntu 独立实现，与 OpenWrt 的 [`luci-app-cfpick`](../README.CN.md) 共用同一套 Python 引擎，位于主分支。
+这是 **CFPick** 的 Debian/Ubuntu 独立实现，与 OpenWrt 的 [`luci-app-cfpick`](../README.md) 共用同一套 Python 引擎，位于主分支。
 它不再依赖 OpenWrt 与 PassWall，而是**自带代理内核模块**：目前提供 **mihomo** 与 **Xray-core**
 两个可切换、可分别升级的内核，用节点分享链接拉起本地 SOCKS，把每个候选 Cloudflare IP 临时写进
 内核配置，先做延迟初筛，再对最优候选做真实下载实测，最后把结果导出为 CSV/JSON，并提供一个
