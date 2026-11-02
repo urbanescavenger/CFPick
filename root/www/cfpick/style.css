@@ -182,6 +182,17 @@ table.data td input.regions { min-width: 150px; font-family: var(--mono); }
 .task-add { margin-top: 12px; align-items: end; }
 .task-add label.check { align-self: center; }
 
+/* structured schedule editor (frequency + fixed time) */
+.schedule-host { display: block; }
+.schedule-editor { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.schedule-editor select,
+.schedule-editor input { width: auto; min-height: 32px; padding: 5px 8px; font-size: 0.8rem; }
+.schedule-editor .sched-mode { min-width: 108px; }
+.schedule-editor .sched-time { min-width: 92px; }
+.schedule-editor .sched-weekday { min-width: 72px; }
+.schedule-editor .sched-day { width: 70px; min-width: 70px; }
+.schedule-editor .sched-custom { flex: 1; min-width: 160px; font-family: var(--mono); }
+
 /* core module cards */
 .badge {
 	display: inline-block; padding: 2px 8px; border-radius: 999px;

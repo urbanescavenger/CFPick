@@ -118,7 +118,7 @@
           </table>
         </div>
         <div class="grid task-add">
-          <label>计划（分 时 日 月 星期） <input id="task-add-schedule" type="text" class="mono" placeholder="0 3 * * *" spellcheck="false"></label>
+          <label>计划 <span id="task-add-schedule" class="schedule-host"></span></label>
           <label>任务
             <select id="task-add-mode">
               <option value="retest">复测现有最优并写回（retest）</option>
@@ -279,32 +279,31 @@
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>定时任务</h2></div>
-        <div class="grid three">
-          <label class="check"><input id="cfg-schedule-enabled" type="checkbox"> 启用定时测速</label>
-          <label>常用频率
-            <select id="cfg-cron-preset">
-              <option value="custom">自定义</option>
-              <option value="hourly">每小时（整点）</option>
-              <option value="half-hourly">每 30 分钟</option>
-              <option value="6h">每 6 小时</option>
-              <option value="12h">每 12 小时</option>
-              <option value="daily">每天 03:00</option>
-              <option value="weekly">每周一 03:00</option>
-              <option value="monthly">每月 1 日 03:00</option>
+        <div class="card-head">
+          <h2>定时任务</h2>
+          <div class="card-actions">
+            <button id="btn-cfg-task-add-toggle" type="button" class="btn small primary">新增任务</button>
+          </div>
+        </div>
+        <p class="muted">显示已有的相关任务，行内「保存」立即生效；「start」主任务会同步到本页配置。</p>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>启用</th><th>计划</th><th>命令</th><th>来源</th><th>操作</th></tr></thead>
+            <tbody id="cfg-task-body"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+          </table>
+        </div>
+        <div id="cfg-task-add-form" class="grid task-add hidden">
+          <label>计划 <span id="cfg-task-add-schedule" class="schedule-host"></span></label>
+          <label>任务
+            <select id="cfg-task-add-mode">
+              <option value="retest">复测现有最优并写回（retest）</option>
+              <option value="test">仅测速，不写回（test）</option>
+              <option value="replace">仅写回现有结果（replace）</option>
+              <option value="start">完整测速并写回（start，会修改主任务）</option>
             </select>
           </label>
+          <label>&nbsp;<button id="btn-cfg-task-add" type="button" class="btn primary">添加</button></label>
         </div>
-        <div class="grid five cron-grid">
-          <label>分钟 <input id="cfg-cron-minute" type="text" spellcheck="false" placeholder="0"></label>
-          <label>小时 <input id="cfg-cron-hour" type="text" spellcheck="false" placeholder="3"></label>
-          <label>日 <input id="cfg-cron-day" type="text" spellcheck="false" placeholder="*"></label>
-          <label>月 <input id="cfg-cron-month" type="text" spellcheck="false" placeholder="*"></label>
-          <label>星期 <input id="cfg-cron-weekday" type="text" spellcheck="false" placeholder="*"></label>
-        </div>
-        <p class="muted">标准五段 cron：分 时 日 月 星期。多个值用逗号分隔，字段内不要用空格。即将写入：
-          <code id="cfg-cron-preview">0 3 * * *</code>
-        </p>
       </div>
 
       <div class="card">

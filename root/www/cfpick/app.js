@@ -4,22 +4,16 @@
 	const $ = (selector) => document.querySelector(selector);
 	const $$ = (selector) => Array.prototype.slice.call(document.querySelectorAll(selector));
 
-	const CRON_FIELDS = [
-		['cfg-cron-minute', '分钟'],
-		['cfg-cron-hour', '小时'],
-		['cfg-cron-day', '日'],
-		['cfg-cron-month', '月'],
-		['cfg-cron-weekday', '星期']
+	const SCHEDULE_MODES = [
+		['daily', '每天'],
+		['weekly', '每周'],
+		['monthly', '每月'],
+		['hourly', '每小时（整点）'],
+		['half-hourly', '每 30 分钟'],
+		['6h', '每 6 小时'],
+		['12h', '每 12 小时'],
+		['custom', '自定义']
 	];
-	const CRON_PRESETS = {
-		hourly: '0 * * * *',
-		'half-hourly': '*/30 * * * *',
-		'6h': '0 */6 * * *',
-		'12h': '0 */12 * * *',
-		daily: '0 3 * * *',
-		weekly: '0 3 * * 1',
-		monthly: '0 3 1 * *'
-	};
 
 	const state = {
 		authMode: 'login',
@@ -585,6 +579,151 @@
 		renderTasks();
 	}
 
+	// ── structured schedule editor ─────────────────────────────────────
+	// The task UI edits a frequency + fixed time instead of a raw five-field
+	// cron string; anything the presets cannot express is shown as 自定义.
+	function cronPartsOf(expression) {
+		const parts = normalizeCronText(expression).trim().split(/\s+/).filter(Boolean);
+
+		if (parts.length && parts[0].charAt(0) === '@')
+			return { alias: parts[0], parts: [parts[0], '', '', '', ''] };
+
+		while (parts.length < 5)
+			parts.push('*');
+
+		return { alias: '', parts: parts.slice(0, 5) };
+	}
+
+	function cronNumber(value) {
+		return /^\d+$/.test(value) ? String(parseInt(value, 10)) : null;
+	}
+
+	function detectSchedule(expression) {
+		const parsed = cronPartsOf(expression);
+		const parts = parsed.parts;
+
+		if (parsed.alias)
+			return { mode: 'custom', raw: parsed.alias };
+
+		const minute = cronNumber(parts[0]);
+		const hour = cronNumber(parts[1]);
+		const day = cronNumber(parts[2]);
+		const weekday = cronNumber(parts[4]);
+		const dailyTail = parts[2] === '*' && parts[3] === '*' && parts[4] === '*';
+
+		if (parts[0] === '0' && parts[1] === '*' && dailyTail)
+			return { mode: 'hourly' };
+		if (parts[0] === '*/30' && parts[1] === '*' && dailyTail)
+			return { mode: 'half-hourly' };
+		if (parts[0] === '0' && parts[1] === '*/6' && dailyTail)
+			return { mode: '6h' };
+		if (parts[0] === '0' && parts[1] === '*/12' && dailyTail)
+			return { mode: '12h' };
+		if (minute != null && hour != null && dailyTail)
+			return { mode: 'daily', minute: minute, hour: hour };
+		if (minute != null && hour != null && parts[2] === '*' && parts[3] === '*' && weekday != null)
+			return { mode: 'weekly', minute: minute, hour: hour,
+				weekday: weekday === '7' ? '0' : weekday };
+		if (minute != null && hour != null && day != null && parts[3] === '*' && parts[4] === '*')
+			return { mode: 'monthly', minute: minute, hour: hour, day: day };
+
+		return { mode: 'custom', raw: parts.join(' ') };
+	}
+
+	function buildScheduleEditor(expression) {
+		const detected = detectSchedule(expression);
+		const editor = el('span', { class: 'schedule-editor' });
+
+		const mode = el('select', { class: 'sched-mode' });
+		SCHEDULE_MODES.forEach(([value, label]) => {
+			mode.appendChild(el('option', { value: value }, label));
+		});
+		mode.value = detected.mode;
+
+		const time = el('input', { type: 'time', class: 'sched-time' });
+		time.value = (detected.hour != null)
+			? pad2(parseInt(detected.hour, 10)) + ':' + pad2(parseInt(detected.minute, 10))
+			: '03:00';
+
+		const weekday = el('select', { class: 'sched-weekday' });
+		[['1', '周一'], ['2', '周二'], ['3', '周三'], ['4', '周四'],
+			['5', '周五'], ['6', '周六'], ['0', '周日']].forEach(([value, label]) => {
+			weekday.appendChild(el('option', { value: value }, label));
+		});
+		weekday.value = detected.weekday || '1';
+
+		const day = el('input', { type: 'number', class: 'sched-day', min: '1', max: '31' });
+		day.value = detected.day || '1';
+
+		const custom = el('input', { type: 'text', class: 'sched-custom mono', spellcheck: 'false' });
+		custom.value = detected.raw || normalizeCronText(expression).trim() || '0 3 * * *';
+
+		editor.appendChild(mode);
+		editor.appendChild(time);
+		editor.appendChild(weekday);
+		editor.appendChild(day);
+		editor.appendChild(custom);
+
+		function sync() {
+			const value = mode.value;
+			const timed = value === 'daily' || value === 'weekly' || value === 'monthly';
+
+			time.classList.toggle('hidden', !timed);
+			weekday.classList.toggle('hidden', value !== 'weekly');
+			day.classList.toggle('hidden', value !== 'monthly');
+			custom.classList.toggle('hidden', value !== 'custom');
+		}
+
+		mode.addEventListener('change', sync);
+		sync();
+
+		function value() {
+			const selected = mode.value;
+
+			if (selected === 'hourly')
+				return '0 * * * *';
+			if (selected === 'half-hourly')
+				return '*/30 * * * *';
+			if (selected === '6h')
+				return '0 */6 * * *';
+			if (selected === '12h')
+				return '0 */12 * * *';
+			if (selected === 'custom')
+				return normalizeCronText(custom.value).trim() || '0 3 * * *';
+
+			const clock = String(time.value || '03:00').split(':');
+			const hour = parseInt(clock[0], 10) || 0;
+			const minute = parseInt(clock[1], 10) || 0;
+
+			if (selected === 'weekly')
+				return minute + ' ' + hour + ' * * ' + (weekday.value || '1');
+			if (selected === 'monthly')
+				return minute + ' ' + hour + ' ' + (parseInt(day.value, 10) || 1) + ' * *';
+			return minute + ' ' + hour + ' * * *';
+		}
+
+		editor._scheduleValue = value;
+
+		return editor;
+	}
+
+	function mountScheduleEditor(id, expression) {
+		const host = $('#' + id);
+		if (!host)
+			return;
+
+		const editor = buildScheduleEditor(expression || '0 3 * * *');
+		host.replaceChildren(editor);
+		host._scheduleValue = editor._scheduleValue;
+	}
+
+	function scheduleExpression(id) {
+		const host = $('#' + id);
+
+		return (host && typeof host._scheduleValue === 'function')
+			? host._scheduleValue() : '';
+	}
+
 	async function saveTask(entry, schedule, enabled) {
 		try {
 			state.tasks = await api('task_save', {
@@ -625,9 +764,9 @@
 		}
 	}
 
-	async function addTask() {
-		const schedule = textValue('task-add-schedule');
-		const mode = textValue('task-add-mode') || 'retest';
+	async function addTask(scheduleId, modeId) {
+		const schedule = scheduleExpression(scheduleId);
+		const mode = textValue(modeId) || 'retest';
 		const script = (state.tasks && state.tasks.run_script) ||
 			'/usr/lib/cfpick/bin/cfpick.sh';
 
@@ -654,8 +793,17 @@
 		}
 	}
 
+	// The same task list is shown on the Overview and Settings tabs; keep both
+	// in sync after any save/delete/add.
 	function renderTasks() {
-		const body = $('#task-body');
+		['#task-body', '#cfg-task-body'].forEach(renderTaskBody);
+	}
+
+	function renderTaskBody(selector) {
+		const body = $(selector);
+		if (!body)
+			return;
+
 		const entries = (state.tasks && state.tasks.entries) || [];
 
 		body.replaceChildren();
@@ -673,17 +821,14 @@
 			const enabled = el('input', { type: 'checkbox', checked: !entry.disabled });
 			enabled.disabled = !editable;
 
-			const schedule = el('input', {
-				type: 'text',
-				class: 'mono',
-				value: entry.schedule || '',
-				spellcheck: 'false'
+			const schedule = buildScheduleEditor(entry.schedule || '0 3 * * *');
+			schedule.querySelectorAll('select, input').forEach((node) => {
+				node.disabled = !editable;
 			});
-			schedule.disabled = !editable;
 
 			const save = el('button', { type: 'button', class: 'btn small primary' }, '保存');
 			save.disabled = !editable;
-			save.addEventListener('click', () => saveTask(entry, schedule.value.trim(), enabled.checked));
+			save.addEventListener('click', () => saveTask(entry, schedule._scheduleValue(), enabled.checked));
 
 			const remove = el('button', { type: 'button', class: 'btn small danger' }, '删除');
 			remove.disabled = !editable;
@@ -1030,14 +1175,6 @@
 		setValue('cfg-ddns-zone-id', g.ddns_zone_id);
 		setValue('cfg-ddns-zone-name', g.ddns_zone_name);
 		setCheck('cfg-ddns-proxied', g.ddns_proxied);
-		setCheck('cfg-schedule-enabled', g.enabled);
-
-		let expression = g.custom_cron || '0 3 * * *';
-
-		if (g.custom_cron_enabled !== '1' && g.hour)
-			expression = '0 */' + (g.hour || 24) + ' * * *';
-
-		fillCron(expression);
 		renderIpLists();
 		fillNodeSelects(g.node_test_node || '', g.stable_node || '');
 		renderWorkers();
@@ -1045,81 +1182,12 @@
 		updateSourceVisibility();
 	}
 
+	// Normalize full-width digits/spaces from Chinese IMEs before sending a
+	// schedule to the API.
 	function normalizeCronText(value) {
 		return String(value || '')
 			.replace(/[！-～]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
 			.replace(/　/g, ' ');
-	}
-
-	function cronParts() {
-		return CRON_FIELDS.map(([id]) => {
-			const node = $('#' + id);
-			return node ? normalizeCronText(node.value).trim() : '';
-		});
-	}
-
-	function cronExpression() {
-		return cronParts().map((part) => part || '*').join(' ');
-	}
-
-	function fillCron(expression) {
-		const parts = String(expression || '').trim().split(/\s+/);
-
-		CRON_FIELDS.forEach(([id], index) => {
-			setValue(id, normalizeCronText(parts[index] || '*'));
-		});
-
-		const preset = $('#cfg-cron-preset');
-		if (preset)
-			preset.value = matchCronPreset(expression);
-
-		updateCronPreview();
-	}
-
-	function matchCronPreset(expression) {
-		const normalized = String(expression || '').trim().replace(/\s+/g, ' ');
-
-		for (const key of Object.keys(CRON_PRESETS))
-			if (CRON_PRESETS[key] === normalized)
-				return key;
-
-		return 'custom';
-	}
-
-	function updateCronPreview() {
-		const parts = cronParts();
-		const hasSpace = parts.some((part) => /\s/.test(part));
-
-		setText('cfg-cron-preview', parts.map((part) => part || '*').join(' ') +
-			(hasSpace ? '  ⚠ 字段内不要用空格' : ''));
-	}
-
-	function onCronInput(event) {
-		const node = event && event.currentTarget;
-
-		if (node) {
-			const normalized = normalizeCronText(node.value);
-			if (normalized !== node.value)
-				node.value = normalized;
-		}
-
-		const preset = $('#cfg-cron-preset');
-		if (preset)
-			preset.value = matchCronPreset(cronExpression());
-
-		updateCronPreview();
-	}
-
-	function applyCronPreset() {
-		const select = $('#cfg-cron-preset');
-		const expression = select ? CRON_PRESETS[select.value] : '';
-
-		if (!expression)
-			return;
-
-		const parts = expression.split(' ');
-		CRON_FIELDS.forEach(([id], index) => setValue(id, parts[index] || '*'));
-		updateCronPreview();
 	}
 
 	function renderIpLists() {
@@ -1179,39 +1247,30 @@
 			.filter((value) => !!value);
 	}
 
-	function validateCron() {
-		const parts = cronParts();
-
-		for (let index = 0; index < parts.length; index++) {
-			const label = CRON_FIELDS[index][1];
-			const value = parts[index];
-
-			if (!value)
-				throw new Error(label + '不能为空');
-
-			if (/\s/.test(value))
-				throw new Error(label + '字段不能包含空格；多个值请用逗号分隔，例如 1,2');
-
-			if (!/^[0-9A-Za-z*,/-]+$/.test(value))
-				throw new Error(label + '字段包含不支持的字符');
-		}
-
-		return parts.join(' ');
-	}
-
 	function collectConfig() {
 		if (!state.config)
 			throw new Error('配置尚未加载完成');
 
-		const cron = validateCron();
 		const stableNode = textValue('cfg-stable-node');
 
 		if (!stableNode)
 			throw new Error('请选择稳定节点（测速期间用于承载实流量）');
 
+		// The schedule is edited in the task list, which writes UCI for the
+		// managed "start" line.  Reuse its current values so saving the rest
+		// of the settings page does not restore a stale schedule.
+		const globalCfg = (state.config && state.config.global) || {};
+		const managed = (state.tasks && state.tasks.managed) || null;
+		const cron = normalizeCronText((managed && managed.schedule) ||
+			globalCfg.custom_cron || '0 3 * * *');
+
+		if (!/^([0-9A-Za-z*,/-]+\s+){4}[0-9A-Za-z*,/-]+$/.test(cron) &&
+			!/^@(reboot|hourly|daily|weekly|monthly|yearly|annually|midnight)$/.test(cron))
+			throw new Error('主任务计划无效，请在定时任务列表中修正');
+
 		return {
 			global: {
-				enabled: checkValue('cfg-schedule-enabled'),
+				enabled: managed ? managed.enabled : (globalCfg.enabled === '1'),
 				ip_source: textValue('cfg-ip-source') || 'builtin_ipv4',
 				ip_online_url: textValue('cfg-ip-online-url'),
 				custom_ip_file: textValue('cfg-custom-ip-file'),
@@ -1392,19 +1451,20 @@
 		});
 		$('#btn-sa-save').addEventListener('click', saveStandalone);
 
+		mountScheduleEditor('task-add-schedule', '0 3 * * *');
+		mountScheduleEditor('cfg-task-add-schedule', '0 3 * * *');
+
 		$('#btn-add-worker').addEventListener('click', addWorker);
-		$('#btn-task-add').addEventListener('click', addTask);
+		$('#btn-task-add').addEventListener('click',
+			() => addTask('task-add-schedule', 'task-add-mode'));
+		$('#btn-cfg-task-add').addEventListener('click',
+			() => addTask('cfg-task-add-schedule', 'cfg-task-add-mode'));
+		$('#btn-cfg-task-add-toggle').addEventListener('click',
+			() => $('#cfg-task-add-form').classList.toggle('hidden'));
 		$('#btn-log-clear').addEventListener('click', () => { $('#log-view').textContent = ''; });
 
 		$$('.save-config').forEach((button) => {
 			button.addEventListener('click', saveConfig);
-		});
-
-		$('#cfg-cron-preset').addEventListener('change', applyCronPreset);
-		CRON_FIELDS.forEach(([id]) => {
-			const node = $('#' + id);
-			if (node)
-				node.addEventListener('input', onCronInput);
 		});
 
 		$('#cfg-ip-source').addEventListener('change', updateSourceVisibility);
