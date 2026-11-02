@@ -33,6 +33,7 @@
 		ipLists: [],
 		workers: [],
 		servers: {},
+		csrf: '',
 		logPos: 0,
 		lastRunning: false,
 		loggedIn: false,
@@ -152,7 +153,12 @@
 			params.set(key, options.query[key]);
 		});
 
-		const headers = { 'X-CFST-Request': '1' };
+		const isPost = options.method === 'POST';
+
+		if (isPost && state.csrf)
+			params.set('csrf', state.csrf);
+
+		const headers = {};
 		let body;
 
 		if (options.body !== undefined) {
@@ -206,6 +212,7 @@
 	function showAuth(mode) {
 		state.authMode = mode;
 		state.loggedIn = false;
+		state.csrf = '';
 		clearTimers();
 		$('#app-view').classList.add('hidden');
 		$('#auth-view').classList.remove('hidden');
@@ -259,7 +266,8 @@
 		button.disabled = true;
 
 		try {
-			await api(state.authMode, { method: 'POST', body: { user: user, password: password } });
+			const data = await api(state.authMode, { method: 'POST', body: { user: user, password: password } });
+			state.csrf = data.csrf || '';
 			storageSet('cfst_web_user', user);
 			await showApp();
 		}
@@ -1057,6 +1065,7 @@
 		clearTimers();
 		state.status = null;
 		state.lastRunning = false;
+		state.csrf = '';
 		showAuth('login');
 	}
 
@@ -1117,6 +1126,7 @@
 			const hello = await api('hello');
 
 			if (hello.authenticated) {
+				state.csrf = hello.csrf || '';
 				await showApp();
 			}
 			else {

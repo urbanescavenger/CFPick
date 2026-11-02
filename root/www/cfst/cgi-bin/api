@@ -182,7 +182,8 @@ function verify_password(stored, password) {
 
 function session_save(user, timeout) {
 	let token = random_token();
-	let data = token + '\n' + user + '\n' + (time() + timeout) + '\n';
+	let csrf = random_token();
+	let data = token + '\n' + user + '\n' + (time() + timeout) + '\n' + csrf + '\n';
 	let fd = fs.open(SESSION_FILE, 'w');
 
 	if (fd) {
@@ -192,7 +193,7 @@ function session_save(user, timeout) {
 
 	try { fs.chmod(SESSION_FILE, 0600); } catch (e) { system('chmod 600 ' + shquote(SESSION_FILE)); }
 
-	return token;
+	return { token: token, csrf: csrf };
 }
 
 function session_load(req) {
@@ -203,13 +204,16 @@ function session_load(req) {
 
 	let lines = split(trim(fs.readfile(SESSION_FILE) || ''), '\n');
 
-	if (length(lines) < 3)
+	// Four lines: session token, user, expiry, CSRF token.  Three-line
+	// sessions from the previous build are treated as expired and require
+	// a fresh login.
+	if (length(lines) < 4 || lines[3] == '')
 		return null;
 
 	if (lines[0] != token || int(lines[2]) <= time())
 		return null;
 
-	return lines[1] || null;
+	return { user: lines[1] || '', csrf: lines[3] };
 }
 
 function session_clear() {
@@ -231,8 +235,12 @@ function require_auth(req) {
 	return session_load(req);
 }
 
-function check_csrf(req) {
-	return req.getenv('HTTP_X_CFST_REQUEST') == '1';
+// uhttpd's CGI handler does not forward custom request headers, so the CSRF
+// token travels as a query parameter and is checked against the session file.
+function check_csrf(req, session) {
+	let supplied = req.message.params.csrf || '';
+
+	return !!(session && session.csrf && supplied && supplied == session.csrf);
 }
 
 function ubus_call(method, args) {
@@ -642,13 +650,15 @@ function dispatch(req) {
 	let action = req.message.params.action || 'hello';
 	let method = req.getenv('REQUEST_METHOD') || 'GET';
 	let cfg = web_config();
-	let user = require_auth(req);
+	let session = require_auth(req);
+	let user = session ? session.user : null;
 
 	if (action == 'hello') {
 		send(req, ok({
 			setup: cfg.password == '',
-			authenticated: user != null,
-			user: user || ''
+			authenticated: session != null,
+			user: user || '',
+			csrf: session ? session.csrf : ''
 		}));
 		return;
 	}
@@ -664,9 +674,9 @@ function dispatch(req) {
 			return;
 		}
 
-		let token = session_save(cfg.user, cfg.timeout);
-		set_session_cookie(req, token, cfg.timeout);
-		send(req, ok({ user: cfg.user }));
+		let saved = session_save(cfg.user, cfg.timeout);
+		set_session_cookie(req, saved.token, cfg.timeout);
+		send(req, ok({ user: cfg.user, csrf: saved.csrf }));
 		return;
 	}
 
@@ -696,9 +706,9 @@ function dispatch(req) {
 		cur.set(CONFIG, 'global', 'web_password', make_password(password));
 		cur.commit(CONFIG);
 
-		let token = session_save(name, cfg.timeout);
-		set_session_cookie(req, token, cfg.timeout);
-		send(req, ok({ user: name }));
+		let saved = session_save(name, cfg.timeout);
+		set_session_cookie(req, saved.token, cfg.timeout);
+		send(req, ok({ user: name, csrf: saved.csrf }));
 		return;
 	}
 
@@ -714,8 +724,8 @@ function dispatch(req) {
 		return;
 	}
 
-	if (method == 'POST' && !check_csrf(req)) {
-		send(req, fail('缺少请求头'), '403 Forbidden');
+	if (method == 'POST' && !check_csrf(req, session)) {
+		send(req, fail('请求校验失败，请刷新页面后重试'), '403 Forbidden');
 		return;
 	}
 
