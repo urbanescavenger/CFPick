@@ -720,3 +720,27 @@ msgstr "启动中…"
 
 msgid "Update finished. Refresh the page to use the new version."
 msgstr "更新完成，刷新页面以使用新版本。"
+
+msgid "Current version"
+msgstr "当前版本"
+
+msgid "Latest version"
+msgstr "远端版本"
+
+msgid "Update available"
+msgstr "有可用更新"
+
+msgid "Already up to date"
+msgstr "已是最新版本"
+
+msgid "Check for updates"
+msgstr "检查更新"
+
+msgid "Checking…"
+msgstr "检查中…"
+
+msgid "Check failed"
+msgstr "检查更新失败"
+
+msgid "Check for the latest GitHub release first; the update button is enabled only when a newer version is available. Updates are refused while a speed test is running."
+msgstr "先点「检查更新」校验 GitHub 最新 Release；只有存在新版本时「在线更新」才可用。测速运行中拒绝更新。"

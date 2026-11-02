@@ -1349,6 +1349,51 @@ const APP_UPDATE_STATUS = '/tmp/cfpick-app-update.json';
 const APP_UPDATE_PID = '/tmp/cfpick-app-update.pid';
 const APP_UPDATE_LOG = '/tmp/cfpick-app-update.log';
 
+// 当前安装的 luci-app-cfpick 版本（opkg 优先，apk 兜底）。
+function app_current_version() {
+	let out = command_output('opkg list-installed luci-app-cfpick 2>/dev/null');
+
+	let m = match(out.stdout || '', /luci-app-cfpick[ \t]+-[ \t]+([0-9][^ \t\n]*)/);
+
+	if (m)
+		return m[1];
+
+	out = command_output('apk info -v luci-app-cfpick 2>/dev/null');
+	m = match(out.stdout || '', /luci-app-cfpick-([0-9][^ \t\n]*)/);
+
+	return m ? m[1] : '';
+}
+
+function app_version_parts(version) {
+	let clean = replace(trim('' + (version || '')), /^[vV]/, '');
+	let raw = split(clean, '.');
+	let out = [];
+
+	for (let i = 0; i < length(raw); i++) {
+		let m = match(raw[i], /^[0-9]+/);
+
+		push(out, m ? +m[0] : 0);
+	}
+
+	return out;
+}
+
+function app_version_compare(a, b) {
+	let pa = app_version_parts(a);
+	let pb = app_version_parts(b);
+	let n = (length(pa) > length(pb)) ? length(pa) : length(pb);
+
+	for (let i = 0; i < n; i++) {
+		let x = (i < length(pa)) ? pa[i] : 0;
+		let y = (i < length(pb)) ? pb[i] : 0;
+
+		if (x != y)
+			return (x > y) ? 1 : -1;
+	}
+
+	return 0;
+}
+
 function app_update_status_data() {
 	let pid = trim(read_file(APP_UPDATE_PID) || '');
 	let alive = (match(pid, /^[0-9]+$/) &&
@@ -1363,9 +1408,49 @@ function app_update_status_data() {
 		log = substr(log, length(log) - 4000);
 
 	info.updating = alive || info.updating == true;
+	info.current_version = app_current_version();
 	info.log_tail = log;
 
 	return info;
+}
+
+// 检查远端最新 Release，不下载、不安装。只在前端点「检查更新」时调用。
+function app_update_check_data() {
+	let current = app_current_version();
+
+	if (current == '')
+		return { ok: false, current: '', latest: '', available: false,
+			error: '无法读取当前版本' };
+
+	let res = command_output('curl -fsSL --max-time 20 ' +
+		shquote('https://api.github.com/repos/urbanescavenger/CFPick/releases/latest') +
+		' 2>/dev/null');
+	let raw = trim(res.stdout || '');
+
+	if (raw == '')
+		return { ok: false, current: current, latest: '', available: false,
+			error: '无法获取远端版本（GitHub API 不可达）' };
+
+	let info = {};
+
+	try { info = json(raw) || {}; }
+	catch (e) { info = {}; }
+
+	let tag = trim('' + (info.tag_name || ''));
+	let latest = replace(tag, /^[vV]/, '');
+
+	if (latest == '')
+		return { ok: false, current: current, latest: '', available: false,
+			error: 'Release 信息中没有版本号' };
+
+	return {
+		ok: true,
+		current: current,
+		latest: latest,
+		tag: tag,
+		available: app_version_compare(latest, current) > 0,
+		error: ''
+	};
 }
 
 function app_update_start_data() {
@@ -1509,6 +1594,10 @@ return {
 
 		api_update_status: api(function() {
 			return app_update_status_data();
+		}),
+
+		api_update_check: api(function() {
+			return app_update_check_data();
 		}),
 
 		api_web_reset: api(function() {

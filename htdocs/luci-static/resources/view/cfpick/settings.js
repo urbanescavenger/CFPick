@@ -30,10 +30,18 @@ const callUpdateStart = rpc.declare({
 	expect: {}
 });
 
+const callUpdateCheck = rpc.declare({
+	object: 'cfpick',
+	method: 'api_update_check',
+	expect: {}
+});
+
 function updateSection(initialStatus, initialUpdate) {
 	const state = {
 		running: !!(initialStatus && initialStatus.running),
-		update: initialUpdate || {}
+		update: initialUpdate || {},
+		checking: false,
+		check: { checked: false, latest: '', available: false, error: '' }
 	};
 
 	const statusText = E('span', {}, _('Ready to update.'));
@@ -41,6 +49,10 @@ function updateSection(initialStatus, initialUpdate) {
 	const logView = E('pre', {
 		style: 'max-height:220px;overflow:auto;white-space:pre-wrap;font-family:monospace;font-size:12px;margin:8px 0 0'
 	}, '');
+	const checkButton = E('button', {
+		type: 'button',
+		'class': 'btn cbi-button'
+	}, _('Check for updates'));
 	const button = E('button', {
 		type: 'button',
 		'class': 'btn cbi-button cbi-button-apply'
@@ -58,16 +70,28 @@ function updateSection(initialStatus, initialUpdate) {
 	function render() {
 		const update = state.update || {};
 		const busy = !!update.updating;
+		const current = update.current_version || '';
 
-		button.disabled = state.running || busy;
+		button.disabled = state.running || busy || !state.check.available;
 		button.textContent = busy ? _('Updating…') : _('Online update');
+		checkButton.disabled = state.running || busy || state.checking;
+		checkButton.textContent = state.checking ? _('Checking…') : _('Check for updates');
 
 		statusText.textContent = update.message
 			|| (state.running
 				? _('A speed test is running; stop it before updating.')
 				: _('Ready to update.'));
-		versionText.textContent = update.version
-			? _('Target version') + ': ' + update.version : '';
+
+		let info = _('Current version') + ': ' + (current || '—');
+		if (state.check.checked) {
+			if (state.check.error)
+				info += ' · ' + state.check.error;
+			else
+				info += ' · ' + _('Latest version') + ': ' + (state.check.latest || '—') +
+					' · ' + (state.check.available ? _('Update available') : _('Already up to date'));
+		}
+		versionText.textContent = info;
+
 		logView.textContent = update.log_tail || '';
 		logView.style.display = update.log_tail ? '' : 'none';
 		reloadButton.style.display = (!busy && update.ok === true) ? '' : 'none';
@@ -85,16 +109,56 @@ function updateSection(initialStatus, initialUpdate) {
 			state.running = !!(status.ok === true && status.data && status.data.running);
 			state.update = (update.ok === true && update.data) ? update.data : {};
 
-			if (wasUpdating && !state.update.updating && state.update.ok)
+			if (wasUpdating && !state.update.updating && state.update.ok) {
+				state.check = { checked: false, latest: '', available: false, error: '' };
 				ui.addNotification(null, E('p', {},
 					_('Update finished. Refresh the page to use the new version.')));
+				runCheck();
+			}
 
 			render();
 		}).catch(function() {});
 	}
 
+	function runCheck() {
+		if (state.running || state.checking || (state.update && state.update.updating))
+			return Promise.resolve();
+
+		state.checking = true;
+		state.check = { checked: false, latest: '', available: false, error: '' };
+		render();
+
+		return callUpdateCheck().then(function(result) {
+			if (!result || result.ok !== true)
+				throw new Error((result && result.error) || _('Request failed'));
+
+			const data = result.data || {};
+			if (data.ok === false)
+				throw new Error(data.error || _('Check failed'));
+
+			state.check = {
+				checked: true,
+				latest: data.latest || '',
+				available: !!data.available,
+				error: ''
+			};
+		}).catch(function(e) {
+			state.check = {
+				checked: true,
+				latest: '',
+				available: false,
+				error: (e && e.message) || _('Check failed')
+			};
+		}).then(function() {
+			state.checking = false;
+			render();
+		});
+	}
+
+	checkButton.addEventListener('click', runCheck);
+
 	button.addEventListener('click', function() {
-		if (state.running || (state.update && state.update.updating))
+		if (!state.check.available || state.running || (state.update && state.update.updating))
 			return;
 
 		if (!confirm(_('Download and install the latest GitHub release? The page may reload after the update.')))
@@ -123,13 +187,13 @@ function updateSection(initialStatus, initialUpdate) {
 	return E('div', { 'class': 'cbi-section' }, [
 		E('h3', {}, _('Online update')),
 		E('p', { 'class': 'cbi-section-descr' },
-			_('Downloads the latest GitHub release and installs it. Refused while a speed test is running.')),
+			_('Check for the latest GitHub release first; the update button is enabled only when a newer version is available. Updates are refused while a speed test is running.')),
 		E('div', { 'class': 'cbi-value' }, [
 			E('label', { 'class': 'cbi-value-title' }, _('Update status')),
 			E('div', { 'class': 'cbi-value-field' }, [
 				E('div', {}, [ statusText ]),
 				E('div', { 'class': 'cbi-value-description' }, [ versionText ]),
-				E('div', { 'class': 'cbi-page-actions' }, [ button, ' ', reloadButton ]),
+				E('div', { 'class': 'cbi-page-actions' }, [ checkButton, ' ', button, ' ', reloadButton ]),
 				logView
 			])
 		])
