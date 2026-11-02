@@ -32,8 +32,8 @@
 	const PHASES = {
 		idle: '空闲',
 		starting: '启动中',
-		latency: '延迟测速',
-		running: '延迟测速',
+		latency: '一轮延迟测试',
+		running: '一轮延迟测试',
 		download: '下载实测',
 		commit: '写入结果',
 		stopping: '正在停止',

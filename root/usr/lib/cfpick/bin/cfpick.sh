@@ -1085,7 +1085,7 @@ nt_download_worker() {
 }
 
 # 下载实测阶段（所有 worker 停止后统一执行）：按映射文件逐 worker 串行实测。
-# 与延迟测速分离的原因：worker 还在跑时，其 SOCKS、uci 改写和探测流量都会和下载
+# 与一轮延迟测试分离的原因：worker 还在跑时，其 SOCKS、uci 改写和探测流量都会和下载
 # 争抢路由器 WAN 带宽与 CPU，边测边下载会让各 IP 的速度互相污染、无法横向比较。
 # 串行由主进程的顺序循环保证，不依赖跨进程锁。
 # 参数: $1=worker 映射文件（idx \t node \t origaddr，与 NT_ORIG_FILE 同格式）
@@ -1481,7 +1481,7 @@ node_speed_test() {
         else
             echolog "开始走节点测速（多节点并行: ${widx} 个 worker, 每IP探测 ${probes} 次, 超时 ${timeout}s, 并发上限 ${threads}）"
             if [ "$DL_TEST_ENABLED" = "1" ]; then
-                echolog "下载实测已启用：所有 worker 延迟测速结束后，逐节点串行实测每个 worker 延迟最优的 ${DL_TEST_COUNT} 个 IP（${DL_TEST_URL}，单 IP 上限 ${DL_TEST_TIME}s），按实测吞吐选最优"
+                echolog "下载实测已启用：所有 worker 完成一轮延迟测试后，逐节点串行实测每个 worker 延迟最优的 ${DL_TEST_COUNT} 个 IP（${DL_TEST_URL}，单 IP 上限 ${DL_TEST_TIME}s），按实测吞吐选最优"
             fi
             echolog "提示：测速期间所有 worker 节点的 address 会被反复改写，这些节点会短暂抖动，测完各写各的最优 IP"
             # 记录实测过的 worker 集合，供 ip_replace/passwall_best_ip 跳过（保留各节点自己的最优 IP）
@@ -1712,7 +1712,7 @@ node_speed_test() {
         node_test_worker 1 "${NODE_TEST_NODE}" "${NODE_TEST_ORIG_ADDR}" "$result_tmp" "$ip_list" "$probe_url" "$timeout" "$probes" 48900 "${NODE_TEST_FLAG_BASE}"
     fi
 
-    # 延迟测速已结束（单节点没有并发 worker），进入下载实测阶段：主进程串行逐 IP 实测。
+    # 一轮延迟测试已结束（单节点没有并发 worker），进入下载实测阶段：主进程串行逐 IP 实测。
     # 放在写回/摘要之前——下载结果决定写回哪个最优 IP，迭代摘要也要带上实测速度。
     local _dmap="${RUN_DIR}/download_map"
     printf '1\t%s\t\n' "$NODE_TEST_NODE" > "$_dmap" 2>/dev/null
