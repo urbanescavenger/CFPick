@@ -114,6 +114,16 @@ function read_file_chunk(path, pos, first_tail) {
 	};
 }
 
+// pgrep pattern for the run script, derived from RUN_SCRIPT so a rename cannot
+// leave status() watching the old name.  The bracket keeps pgrep from matching
+// its own command line, e.g. "[c]fpick\.sh".
+function run_script_pattern() {
+	let name = replace(RUN_SCRIPT, /^.*\//, '');
+	let escaped = replace(name, /[.]/g, '\\.');
+
+	return '[' + substr(escaped, 0, 1) + ']' + substr(escaped, 1);
+}
+
 function status() {
 	let cur = uci.cursor();
 	let enabled = '0';
@@ -125,7 +135,7 @@ function status() {
 	catch (e) {}
 
 	// 走节点测速无独立二进制进程，用脚本主进程判定运行中
-	let running = (command('pgrep -f "[p]asswall-speedtest\\.sh" >/dev/null 2>&1').code == 0);
+	let running = (command('pgrep -f "' + run_script_pattern() + '" >/dev/null 2>&1').code == 0);
 
 	return {
 		running: running,
@@ -134,7 +144,7 @@ function status() {
 }
 
 function start() {
-	command('pgrep -f "[p]asswall-speedtest\\.sh" | xargs kill -9 >/dev/null 2>&1');
+	command('pgrep -f "' + run_script_pattern() + '" | xargs kill -9 >/dev/null 2>&1');
 	command(shquote(RUN_SCRIPT) + ' start >/dev/null 2>&1 &');
 
 	return {};
