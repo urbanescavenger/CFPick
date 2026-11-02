@@ -164,6 +164,22 @@ def _zone_candidates(domain):
     return [".".join(labels[index:]) for index in range(0, max(0, len(labels) - 1))]
 
 
+def _entry_summary(entry):
+    """One node's outcome in plain text, for the run summary."""
+    label = str(entry.get("domain") or entry.get("node") or "")
+    if entry.get("error"):
+        return "%s: %s" % (label, entry["error"])
+    parts = []
+    for key, title in (("created", "新建"), ("updated", "更新"),
+                       ("unchanged", "无变化")):
+        value = int(entry.get(key) or 0)
+        if value:
+            parts.append("%s %d" % (title, value))
+    if entry.get("extra"):
+        parts.append("另有 %d 条旧记录未动" % entry["extra"])
+    return "%s: %s" % (label, "，".join(parts) or "未写入")
+
+
 def _record_differs(record, ttl, proxied):
     try:
         current_ttl = int(record.get("ttl", 0))
@@ -369,9 +385,14 @@ def apply(cfg, nodes, rows, log=None, client=None, when=""):
             log("DDNS [%s] %s 写入失败: %s" % (entry["node"], entry["domain"], exc))
         report["nodes"].append(entry)
 
+    # The summary lists each node's outcome instead of only a failure count:
+    # a node skipped for "no usable result" is not the same as a Cloudflare
+    # write error, and the caller (log / status page) can tell them apart.
+    report["summary"] = [_entry_summary(entry) for entry in report["nodes"]]
     if report["failed"]:
         report["ok"] = False
-        report["error"] = "%d 个节点写入失败" % report["failed"]
+        report["error"] = "；".join(report["summary"])
+        log("DDNS 汇总: %s" % report["error"])
     return report
 
 

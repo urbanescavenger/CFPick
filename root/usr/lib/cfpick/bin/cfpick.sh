@@ -262,16 +262,32 @@ function first_result_ip(){
     sed -n '2,$p' "$1" 2>/dev/null | grep -v '^#' | awk -F, 'NF >= 7 && $1 != "" { print $1; exit }'
 }
 
+# 解析主机名当前指向的 IP（一行一个）。优先 resolveip；没有该命令时退回 nslookup。
+retest_resolve_host() {
+    local host="$1"
+    [ -n "$host" ] || return 0
+    if command -v resolveip >/dev/null 2>&1; then
+        resolveip "$host" 2>/dev/null
+        return 0
+    fi
+    nslookup "$host" 2>/dev/null | awk '
+        /^Name:/ { seen=1; next }
+        /^Address( [0-9]+)?:/ && seen { print $NF }'
+}
+
 # ── 复测现有最优 IP（retest 入口）─────────────────────────────
-# 不重新下载在线列表：候选 = 各节点当前 address + 当前 result.csv 中该节点的行。
-# 用于对「已经优选出来的一小撮 IP」做一轮延迟 + 下载实测，快速确认/重排，
-# 不必再拉 1~2 万条 CM 源。每个待测节点的候选写入 RUN_DIR/retest_ips_<node>.txt。
+# 不重新下载在线列表：候选 = 各节点当前 address + DDNS 域名当前解析的 IP
+# + 当前 result.csv 中该节点的行。用于对「已经优选出来的一小撮 IP」做一轮
+# 延迟 + 下载实测，快速确认/重排，不必再拉 1~2 万条 CM 源。
+# DDNS 节点的 address 是它自己的域名（不是 IP），若只按 address 取候选会是
+# 空的、这些节点每轮都被跳过；所以额外解析 DDNS 域名，把当前发布的 IP 也
+# 纳入复测（橙云代理时解析到的是 Cloudflare 节点，不能当候选，故跳过）。
 build_retest_list_one() {
     # 注意：不能写成 local nodeid="$1" out="...${nodeid}..." —— shell 会先展开整条 local
     # 命令的所有 RHS 再赋值，${nodeid} 此时还未定义（set -u 下直接报 unbound variable）。
     local nodeid="$1" maxn="$2"
     local out="${RUN_DIR}/retest_ips_${nodeid}.txt"
-    local remarks addr tmp="${out}.tmp"
+    local remarks addr dom tmp="${out}.tmp"
     remarks=$(uci -q get "passwall.${nodeid}.remarks" 2>/dev/null)
     remarks="${remarks//,/ }"
     addr=$(uci -q get "passwall.${nodeid}.address" 2>/dev/null)
@@ -281,6 +297,11 @@ build_retest_list_one() {
         ''|*[!0-9a-fA-F:.]*) ;;
         *) echo "$addr" >> "$tmp" ;;
     esac
+    # DDNS 节点：address 是域名，用域名当前解析出的 IP 当复测候选（即上次发布的 IP）
+    dom=$(nt_node_ddns_domain "$nodeid" 2>/dev/null)
+    if [ -n "$dom" ] && [ "$(uci -q get cfpick.global.ddns_proxied 2>/dev/null)" != "1" ]; then
+        retest_resolve_host "$dom" >> "$tmp"
+    fi
     if [ -f "$IP_FILE" ] && [ -n "$remarks" ]; then
         sed -n '2,$p' "$IP_FILE" 2>/dev/null | grep -av '^#' | \
             awk -F, -v n="$remarks" 'NF>=8 && $1!="" && $8==n {print $1}' >> "$tmp"
@@ -495,12 +516,12 @@ function speed_test(){
         case "${iterate_minutes:-}" in ''|*[!0-9]*) echolog "迭代测速时长无效，中止"; return 1 ;; esac
         [ "${iterate_minutes}" -ge 1 ] 2>/dev/null || { echolog "迭代测速时长须 ≥1 分钟，中止"; return 1; }
         [ "${RETEST_FROM_RESULT:-0}" = "1" ] && \
-            echolog "════ 复测现有最优 IP（候选来自 result.csv / 节点当前 address，限时迭代，不重新下载在线列表）════"
+            echolog "════ 复测现有最优 IP（候选来自 result.csv / 节点当前 address / DDNS 域名解析，限时迭代，不重新下载在线列表）════"
         iterate_speed_test
         _rc=$?
     elif [ "${RETEST_FROM_RESULT:-0}" = "1" ]; then
         # 复测现有最优 IP：单轮延迟 + 下载实测
-        echolog "════ 复测现有最优 IP（一轮延迟 + 下载实测，不重新下载在线列表）════"
+        echolog "════ 复测现有最优 IP（一轮延迟 + 下载实测，候选含 DDNS 域名解析，不重新下载在线列表）════"
         node_speed_test
         _rc=$?
     else
@@ -767,6 +788,11 @@ nt_node_has_ddns() {
     [ "$(uci -q get cfpick.global.ddns_enabled 2>/dev/null)" = "1" ] || return 1
     [ -n "${NT_DDNS_MAP:-}" ] && [ -s "$NT_DDNS_MAP" ] || return 1
     awk -F '\t' -v n="$1" '$1 == n { found=1 } END { exit(found ? 0 : 1) }' "$NT_DDNS_MAP"
+}
+nt_node_ddns_domain() {
+    [ "$(uci -q get cfpick.global.ddns_enabled 2>/dev/null)" = "1" ] || return 0
+    [ -n "${NT_DDNS_MAP:-}" ] && [ -s "$NT_DDNS_MAP" ] || return 0
+    awk -F '\t' -v n="$1" '$1 == n { print $2; exit }' "$NT_DDNS_MAP"
 }
 
 # 下载实测的串行性由结构保证：所有 worker 停止后，主进程按 worker 顺序逐个执行
@@ -1391,10 +1417,10 @@ node_speed_test() {
     local ip_source_mode="file"
     local selected_ip_file=""
     if [ "${RETEST_FROM_RESULT:-0}" = "1" ]; then
-        # 复测模式：候选来自当前 result.csv + 各节点当前 address，绝不重新拉在线列表。
+        # 复测模式：候选来自当前 result.csv + 各节点当前 address + DDNS 域名解析，绝不重新拉在线列表。
         read_node_ip_map
-        build_retest_ip_lists "$count" || { echolog "复测模式：没有可复测的候选 IP（result.csv 为空且节点 address 不是 IP），中止"; return 1; }
-        echolog "复测模式：候选来自现有 result.csv / 各节点当前 address（不重新下载在线列表），每节点最多 ${count} 个"
+        build_retest_ip_lists "$count" || { echolog "复测模式：没有可复测的候选 IP（result.csv 为空、节点 address 不是 IP 且 DDNS 域名无可解析记录），中止"; return 1; }
+        echolog "复测模式：候选来自现有 result.csv / 各节点当前 address / DDNS 域名解析（不重新下载在线列表），每节点最多 ${count} 个"
         ip_source_mode="retest"
     elif [ "${ip_source:-}" = "online" ]; then
         # online CM 源：一次下载原始列表，按各 ip_list 的 regions 分别过滤成 ip_list_<N>.txt
@@ -1645,7 +1671,7 @@ node_speed_test() {
             if [ "$(uci -q get cfpick.global.ddns_enabled 2>/dev/null)" = "1" ]; then
                 echolog "开始写入 DDNS：按节点最优 IP 更新 Cloudflare DNS"
                 /usr/bin/cfpick ddns uci-apply --result "$merged" >>"$LOG_FILE" 2>&1 || \
-                    echolog "警告：DDNS 写入失败（不影响测速结果）"
+                    echolog "警告：DDNS 有节点未完成（明细见上，不影响测速结果）"
             fi
             rotate_result_files
             mv -f "$merged" "$IP_FILE"
@@ -1771,7 +1797,7 @@ node_speed_test() {
     if [ "$(uci -q get cfpick.global.ddns_enabled 2>/dev/null)" = "1" ]; then
         echolog "开始写入 DDNS：按节点最优 IP 更新 Cloudflare DNS"
         /usr/bin/cfpick ddns uci-apply --result "$result_tmp" >>"$LOG_FILE" 2>&1 || \
-            echolog "警告：DDNS 写入失败（不影响测速结果）"
+            echolog "警告：DDNS 有节点未完成（明细见上，不影响测速结果）"
     fi
     rotate_result_files
     mv -f "$result_tmp" "$IP_FILE"
