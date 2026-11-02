@@ -469,3 +469,114 @@ msgstr "astra-dns 配置文件路径"
 
 msgid "astra-dns Binary Path"
 msgstr "astra-dns 二进制路径"
+
+msgid "Management"
+msgstr "管理"
+
+msgid "Dashboard for the PassWall Cloudflare IP speed test: run state, best results, history, scheduled tasks and the live log."
+msgstr "PassWall Cloudflare IP 测速管理面板：运行状态、最优结果、历史、定时任务和实时日志。"
+
+msgid "Run status"
+msgstr "运行状态"
+
+msgid "State"
+msgstr "状态"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "Idle"
+msgstr "空闲"
+
+msgid "Testing"
+msgstr "测速中"
+
+msgid "Starting"
+msgstr "启动中"
+
+msgid "Stopping"
+msgstr "正在停止"
+
+msgid "Writing results"
+msgstr "正在写入结果"
+
+msgid "Process"
+msgstr "进程"
+
+msgid "Scheduled task"
+msgstr "定时任务"
+
+msgid "Scheduled tasks"
+msgstr "定时任务列表"
+
+msgid "Best IPs"
+msgstr "各节点最优 IP"
+
+msgid "Node"
+msgstr "节点"
+
+msgid "IP"
+msgstr "IP"
+
+msgid "Loss"
+msgstr "丢包"
+
+msgid "Download"
+msgstr "下载"
+
+msgid "History"
+msgstr "历史"
+
+msgid "Last result"
+msgstr "上次结果"
+
+msgid "Configured workers"
+msgstr "已配置 worker"
+
+msgid "Source"
+msgstr "来源"
+
+msgid "Schedule"
+msgstr "计划"
+
+msgid "Command"
+msgstr "命令"
+
+msgid "Managed"
+msgstr "归属"
+
+msgid "This plugin"
+msgstr "本插件"
+
+msgid "Live log"
+msgstr "实时日志"
+
+msgid "Retest"
+msgstr "复测"
+
+msgid "Test started"
+msgstr "已开始测速"
+
+msgid "Retest started"
+msgstr "已开始复测"
+
+msgid "Stop requested"
+msgstr "已请求停止"
+
+msgid "No results yet"
+msgstr "暂无结果"
+
+msgid "No history yet"
+msgstr "暂无历史"
+
+msgid "No scheduled tasks"
+msgstr "暂无定时任务"
+
+msgid "Showing the first %d of %d rows"
+msgstr "仅显示前 %d 条，共 %d 条"
+
+msgid "Request failed"
+msgstr "请求失败"
+
+msgid "Disabled"
+msgstr "未启用"

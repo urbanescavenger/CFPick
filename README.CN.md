@@ -31,11 +31,49 @@
 
 ## 界面页面
 
-插件在 LuCI → 服务 → PassWall Speed Test 下提供三个页面：
+插件在 LuCI → 服务 → PassWall Speed Test 下提供四个页面：
 
+*   **管理页（Management）**：运行状态、开始/停止/复测、各节点最优 IP、最近历史、只读定时任务列表和实时日志；基于下文的管理 API。
 *   **主设置页（Plugin Settings）**：包含「基本 / 计划」两个 Tab，提供 Start/Stop 测速按钮、3 秒轮询的状态条、Best IP 只读区，以及延迟历史折线图。
 *   **第三方集成页（Third Party Settings）**：按本机已安装的代理软件按需显示对应 Tab；此处选中的 passwall 节点同时作为多线程 worker。
 *   **日志页（Logs）**：增量拉取测速日志，可勾选每 5 秒自动刷新。
+
+## 管理 API
+
+rpcd 对象 `passwall-speedtest` 同时提供两套方法：
+
+*   **旧方法**（`status` / `start` / `start_retest` / `stop` / `get_log` / `get_history` / `get_best_result` / `list_nodes`）保持原有返回结构，已有页面和脚本不受影响。
+*   **`api_*` 稳定接口**：统一返回信封，异常也会变成正常响应，便于外部脚本消费：
+
+```json
+{ "ok": true,  "data": { }, "ts": 1700000000 }
+{ "ok": false, "error": "message", "ts": 1700000000 }
+```
+
+| 方法 | 权限 | 参数 | 说明 |
+| --- | --- | --- | --- |
+| `api_ping` | read | — | 健康检查与 API 版本 |
+| `api_status` | read | — | 运行状态、PID、模式、阶段、耗时、cron、worker 数与全局最优 |
+| `api_results` | read | `limit`（0 = 全部） | `result.csv` 的结构化结果 |
+| `api_history` | read | — | 持久历史（与旧 `get_history` 相同） |
+| `api_nodes` | read | — | 本机各代理软件的节点列表 |
+| `api_log` | read | `pos` | 增量日志，`pos` 为上次返回的位置 |
+| `api_tasks` | read | — | `/etc/crontabs/root`、`/etc/crontab` 的只读任务列表，标记本插件维护的行 |
+| `api_run_start` | write | — | 开始一轮完整测速 |
+| `api_run_retest` | write | — | 复测现有最优 IP |
+| `api_run_stop` | write | — | 请求停止（协作式，完成收尾后退出） |
+
+示例：
+
+```sh
+ubus call passwall-speedtest api_status
+ubus call passwall-speedtest api_results '{"limit":500}'
+ubus call passwall-speedtest api_tasks
+```
+
+通过 LuCI/rpcd 会话访问的外部应用需要在 ACL 中获得对应方法的 read/write 权限；以 root 直接执行 `ubus call` 不受 ACL 限制。本插件自带的 ACL 已包含全部 `api_*` 方法。
+
+> 首次安装或升级本版本后，如果管理页提示 `Request failed` 或看不到 `api_*` 方法，请执行 `/etc/init.d/rpcd restart`（或重启路由器）让 rpcd 重新加载 ucode 与 ACL。
 
 ## 测速参数
 

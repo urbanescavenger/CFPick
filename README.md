@@ -31,11 +31,49 @@
 
 ## UI Pages
 
-Three pages under LuCI → Services → PassWall Speed Test:
+Four pages under LuCI → Services → PassWall Speed Test:
 
+*   **Management**: run state, start/stop/retest, per-node best IPs, recent history, a read-only scheduled-task list and the live log; backed by the management API below.
 *   **Plugin Settings**: Basic (test params) + Crontab tabs, with a Start/Stop button, a 3-second polled status bar, a read-only Best IP area, and a latency history chart.
 *   **Third Party Settings**: Tabs appear on demand for each proxy tool installed on the router. The passwall nodes selected here double as the parallel workers.
 *   **Logs**: Incrementally fetches the test log, with an optional 5-second auto-refresh.
+
+## Management API
+
+The rpcd object `passwall-speedtest` exposes two sets of methods:
+
+*   **Legacy methods** (`status` / `start` / `start_retest` / `stop` / `get_log` / `get_history` / `get_best_result` / `list_nodes`) keep their original shapes so existing pages and scripts keep working.
+*   **Stable `api_*` methods** use a uniform envelope, and exceptions become normal error responses:
+
+```json
+{ "ok": true,  "data": { }, "ts": 1700000000 }
+{ "ok": false, "error": "message", "ts": 1700000000 }
+```
+
+| Method | ACL | Args | Description |
+| --- | --- | --- | --- |
+| `api_ping` | read | — | Health check and API version |
+| `api_status` | read | — | Run state, PID, mode, phase, elapsed, cron, worker count and the global best IP |
+| `api_results` | read | `limit` (0 = all) | Structured rows from `result.csv` |
+| `api_history` | read | — | Persistent history (same data as `get_history`) |
+| `api_nodes` | read | — | Nodes of each installed proxy tool |
+| `api_log` | read | `pos` | Incremental log chunk starting at the previous position |
+| `api_tasks` | read | — | Read-only task list from `/etc/crontabs/root` and `/etc/crontab`, marking this plugin's line |
+| `api_run_start` | write | — | Start a full test |
+| `api_run_retest` | write | — | Retest the current best IPs |
+| `api_run_stop` | write | — | Request a cooperative stop (finishes the current write-back) |
+
+Examples:
+
+```sh
+ubus call passwall-speedtest api_status
+ubus call passwall-speedtest api_results '{"limit":500}'
+ubus call passwall-speedtest api_tasks
+```
+
+External applications using a LuCI/rpcd session need read/write access to these methods in the rpcd ACL; a root `ubus call` bypasses the ACL. The plugin's own ACL already includes all `api_*` methods.
+
+> After installing or upgrading to this version, if the Management page reports `Request failed` or the `api_*` methods are missing, run `/etc/init.d/rpcd restart` (or reboot) so rpcd reloads the ucode and ACL.
 
 ## Test Parameters
 

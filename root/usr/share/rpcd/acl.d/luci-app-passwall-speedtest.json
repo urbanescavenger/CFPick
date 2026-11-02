@@ -3,13 +3,20 @@
 		"description": "Grant UCI access for luci-app-passwall-speedtest",
 		"read": {
 			"ubus": {
-				"passwall-speedtest": [ "status", "get_log", "get_history", "get_best_result", "list_nodes" ]
+				"passwall-speedtest": [
+					"status", "get_log", "get_history", "get_best_result", "list_nodes",
+					"api_ping", "api_status", "api_results", "api_history",
+					"api_nodes", "api_log", "api_tasks"
+				]
 			},
 			"uci": [ "passwall-speedtest" ]
 		},
 		"write": {
 			"ubus": {
-				"passwall-speedtest": [ "start", "start_retest", "stop" ]
+				"passwall-speedtest": [
+					"start", "start_retest", "stop",
+					"api_run_start", "api_run_retest", "api_run_stop"
+				]
 			},
 			"uci": [ "passwall-speedtest" ]
 		}

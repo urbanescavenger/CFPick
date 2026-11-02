@@ -4,17 +4,21 @@
 
 const callGetLog = rpc.declare({
 	object: 'passwall-speedtest',
-	method: 'get_log',
+	method: 'api_log',
 	params: [ 'pos' ],
-	expect: {}
+	expect: { ok: false, data: { pos: 0, content: '' } }
 });
 
 return view.extend({
 	logPos: 0,
 
 	getLog: function(textarea) {
-		return callGetLog(this.logPos).then(L.bind(function(data) {
-			const content = (data && data.content) || '';
+		return callGetLog(this.logPos).then(L.bind(function(result) {
+			if (!result || result.ok !== true)
+				return;
+
+			const data = result.data || {};
+			const content = data.content || '';
 
 			if (content.length > 0) {
 				// 长时尾随时 textarea 无限增长会拖死页面：超过 512KB 只保留末尾
@@ -22,7 +26,7 @@ return view.extend({
 				textarea.scrollTop = textarea.scrollHeight;
 			}
 
-			if (data && data.pos != null)
+			if (data.pos != null)
 				this.logPos = parseInt(data.pos, 10) || this.logPos;
 		}, this));
 	},

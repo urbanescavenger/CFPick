@@ -11,6 +11,15 @@
 		}
 	},
 
+	"admin/services/passwall-speedtest/manage": {
+		"title": "Management",
+		"order": 0,
+		"action": {
+			"type": "view",
+			"path": "passwall-speedtest/manage"
+		}
+	},
+
 	"admin/services/passwall-speedtest/general": {
 		"title": "Plugin Settings",
 		"order": 1,
