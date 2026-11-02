@@ -143,20 +143,27 @@ function status() {
 	};
 }
 
+// Single-instance guard at the API layer as well: while a run is alive,
+// starting another one is a no-op.  The user must stop the current run first;
+// the shell script's run lock is the second line of defence.
 function start() {
-	command('pgrep -f "' + run_script_pattern() + '" | xargs kill -9 >/dev/null 2>&1');
+	if (status().running)
+		return { started: false, running: true };
+
 	command(shquote(RUN_SCRIPT) + ' start >/dev/null 2>&1 &');
 
-	return {};
+	return { started: true, running: true };
 }
 
 // 复测现有最优 IP：只对当前 result.csv + 各节点现有 address 做一轮延迟 + 下载实测，
-// 不重新下载在线列表。不 kill 现有运行——脚本入口的单实例锁会跳过并记一行日志，
-// 避免用户误点把正在跑的整轮测速杀掉。
+// 不重新下载在线列表。运行中同样直接拒绝，避免用户误点。
 function start_retest() {
+	if (status().running)
+		return { started: false, running: true };
+
 	command(shquote(RUN_SCRIPT) + ' retest >/dev/null 2>&1 &');
 
-	return {};
+	return { started: true, running: true };
 }
 
 // 记录的主进程 PID 是否还活着、且确实是本脚本。只看 /proc/<pid> 存在会被「PID 被无关进程
@@ -1315,6 +1322,67 @@ function standalone_status() {
 	};
 }
 
+// ── online package update ───────────────────────────────────────────────
+// The actual download/install runs detached in app-update.sh: replacing the
+// package files (and restarting rpcd) would otherwise cut off this RPC call.
+const APP_UPDATE_SCRIPT = '/usr/lib/cfpick/app-update.sh';
+const APP_UPDATE_STATUS = '/tmp/cfpick-app-update.json';
+const APP_UPDATE_PID = '/tmp/cfpick-app-update.pid';
+const APP_UPDATE_LOG = '/tmp/cfpick-app-update.log';
+
+function app_update_status_data() {
+	let pid = trim(read_file(APP_UPDATE_PID) || '');
+	let alive = (match(pid, /^[0-9]+$/) &&
+		system('kill -0 ' + pid + ' 2>/dev/null') == 0);
+	let info = {};
+	let log = read_file(APP_UPDATE_LOG);
+
+	try { info = json(read_file(APP_UPDATE_STATUS) || '{}') || {}; }
+	catch (e) { info = {}; }
+
+	if (length(log) > 4000)
+		log = substr(log, length(log) - 4000);
+
+	info.updating = alive || info.updating == true;
+	info.log_tail = log;
+
+	return info;
+}
+
+function app_update_start_data() {
+	if (status().running)
+		return { started: false, error: '测速正在运行，请先停止后再更新' };
+
+	if (standalone_updating())
+		return { started: false, error: '内核正在更新，请稍候再更新程序' };
+
+	let current = app_update_status_data();
+
+	if (current.updating)
+		return { started: false, error: '已有在线更新正在进行' };
+
+	if (!fs.access(APP_UPDATE_SCRIPT, 'f'))
+		return { started: false, error: '缺少在线更新脚本' };
+
+	let run = '/tmp/cfpick-app-update-run.sh';
+
+	// Execute a copy: opkg replaces the installed script while it is running.
+	command('cp -f ' + shquote(APP_UPDATE_SCRIPT) + ' ' + shquote(run) +
+		' && chmod 700 ' + shquote(run));
+	command('rm -f ' + shquote(APP_UPDATE_STATUS) + ' ' +
+		shquote(APP_UPDATE_PID) + ' ' + shquote(APP_UPDATE_LOG));
+
+	// -m -p is required: without a pidfile start-stop-daemon refuses because
+	// /bin/sh itself is already running.
+	let rc = system('start-stop-daemon -S -b -m -p ' + shquote(APP_UPDATE_PID) +
+		' -x /bin/sh -- ' + shquote(run) + ' >/dev/null 2>&1');
+
+	if (rc != 0)
+		command('nohup sh ' + shquote(run) + ' >/dev/null 2>&1 &');
+
+	return { started: true };
+}
+
 
 return {
 	'cfpick': {
@@ -1416,18 +1484,28 @@ return {
 			return api_task_add_data(req);
 		}, { source: '', schedule: '', command: '' }),
 
+		api_update_start: api(function() {
+			return app_update_start_data();
+		}),
+
+		api_update_status: api(function() {
+			return app_update_status_data();
+		}),
+
 		api_web_reset: api(function() {
 			return api_web_reset_data();
 		}),
 
 		api_run_start: api(function() {
-			start();
-			return { started: true, mode: 'start' };
+			let result = start();
+			result.mode = 'start';
+			return result;
 		}),
 
 		api_run_retest: api(function() {
-			start_retest();
-			return { started: true, mode: 'retest' };
+			let result = start_retest();
+			result.mode = 'retest';
+			return result;
 		}),
 
 		api_run_stop: api(function() {

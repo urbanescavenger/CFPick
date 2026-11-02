@@ -5,12 +5,18 @@
 
 [English](README.en.md)
 
-**CFPick** 是一个 Cloudflare / CDN 优选 IP 工具，提供两种部署方式：
+**CFPick 是一个 Cloudflare CDN 优选 IP 工具：用真实的代理内核在本机实测，从 Cloudflare 真实的 CDN 边缘节点中挑出对你这条线路最快的 IP。**
 
-*   **OpenWrt LuCI 插件**（`luci-app-cfpick`）：经你已有的 [PassWall](https://github.com/xiaorouji/openwrt-passwall) 节点，或本机 mihomo / Xray-core 内核，对候选 Cloudflare IP 做两阶段测速，把最优 IP 写回代理节点和 DNS 集成。
-*   **Debian / Ubuntu 脚本版**（[`debian/`](debian/README.md)）：不依赖 OpenWrt 和 PassWall，自带两个可切换、可独立升级的代理内核、Python 标准库引擎与 Web 面板。
+*   **候选可以来自最新的在线优选 IP 列表**：选择在线 CM 源后，每轮测速前都会实时拉取最新列表（`IP:PORT#国家码`，可按国家和端口筛选，URL 可自定义）；也可改用内置 IPv4 / IPv6 列表或自定义 IP 文件。列表只是候选，不是最终结论。
+*   **用真实内核、真实链路测速**：每个候选 IP 都临时写进节点配置，由本机 mihomo / Xray-core 内核，或你已有的 [PassWall](https://github.com/xiaorouji/openwrt-passwall) 节点拉起本地 SOCKS，对候选 IP 发起真实连接并实测。
+*   **选的是本地最优，而不是列表排名**：先对全部候选测延迟，再对延迟最优的若干 IP 真实下载固定大小文件测吞吐；最终选哪个 IP 取决于你本机的实际网络，而不是别人测出来的排序。
 
 测速流程：把每个候选 IP 临时写进一个节点（或交给本机内核），用本地 SOCKS 发起 `curl -I` 取 `time_pretransfer` 对全部候选做延迟初筛；再对每个 worker 延迟最优的 N 个 IP 经同一条链路**真实下载固定大小文件**，按实测吞吐（MB/s）选出最终最优，最后写回节点及其它集成。
+
+CFPick 提供两种部署方式：
+
+*   **OpenWrt LuCI 插件**（`luci-app-cfpick`）：经你已有的 PassWall 节点或本机内核完成上述测速，把最优 IP 写回代理节点和 DNS 集成。
+*   **Debian / Ubuntu 脚本版**（[`debian/`](debian/README.md)）：不依赖 OpenWrt 和 PassWall，自带两个可切换、可独立升级的代理内核、Python 标准库引擎与 Web 面板。
 
 > **改名说明**：项目原名 `luci-app-cloudflarespeedtest`，后改为 `luci-app-passwall-speedtest`；从 **1.0.0** 起统一更名为 **CFPick**。包名 `luci-app-cfpick`，UCI 配置 `/etc/config/cfpick`，CLI `cfpick`。旧配置不会自动迁移，升级后请在 LuCI 重新配置。
 
@@ -40,7 +46,7 @@
 插件在 LuCI → 服务 → CFPick 下只有两个入口，和 Lucky 的布局一致：
 
 *   **操作台（Console）**：显示测速运行状态、Web 操作台地址，以及「打开 Web 操作台」按钮；实际操作都在独立操作台里完成，「独立测速」页签也在操作台内。
-*   **设置（Settings）**：只保留 Web 操作台入口配置：启用、端口、监听地址、用户名、会话有效期、打开操作台、重置密码。所有测速设置和操作都在独立操作台的页签里。
+*   **设置（Settings）**：Web 操作台入口配置（启用、端口、监听地址、用户名、会话有效期、打开操作台、重置密码），以及「在线更新」按钮：从 GitHub 最新 Release 下载并安装对应的 ipk / apk，测速运行中拒绝更新，更新完成后刷新页面即可。所有测速设置和操作仍在独立操作台的页签里。
 
 ## 独立 Web 操作台
 

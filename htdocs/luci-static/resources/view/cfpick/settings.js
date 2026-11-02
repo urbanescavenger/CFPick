@@ -1,6 +1,7 @@
 'use strict';
 'require view';
 'require form';
+'require poll';
 'require rpc';
 'require ui';
 'require uci';
@@ -10,6 +11,130 @@ const callReset = rpc.declare({
 	method: 'api_web_reset',
 	expect: {}
 });
+
+const callStatus = rpc.declare({
+	object: 'cfpick',
+	method: 'api_status',
+	expect: { ok: false, data: {} }
+});
+
+const callUpdateStatus = rpc.declare({
+	object: 'cfpick',
+	method: 'api_update_status',
+	expect: { ok: false, data: {} }
+});
+
+const callUpdateStart = rpc.declare({
+	object: 'cfpick',
+	method: 'api_update_start',
+	expect: { ok: false, data: {} }
+});
+
+function updateSection(initialStatus, initialUpdate) {
+	const state = {
+		running: !!(initialStatus && initialStatus.running),
+		update: initialUpdate || {}
+	};
+
+	const statusText = E('span', {}, _('Ready to update.'));
+	const versionText = E('span', {}, '');
+	const logView = E('pre', {
+		style: 'max-height:220px;overflow:auto;white-space:pre-wrap;font-family:monospace;font-size:12px;margin:8px 0 0'
+	}, '');
+	const button = E('button', {
+		type: 'button',
+		'class': 'btn cbi-button cbi-button-apply'
+	}, _('Online update'));
+	const reloadButton = E('button', {
+		type: 'button',
+		'class': 'btn cbi-button',
+		style: 'display:none'
+	}, _('Refresh page'));
+
+	reloadButton.addEventListener('click', function() {
+		window.location.reload();
+	});
+
+	function render() {
+		const update = state.update || {};
+		const busy = !!update.updating;
+
+		button.disabled = state.running || busy;
+		button.textContent = busy ? _('Updating…') : _('Online update');
+
+		statusText.textContent = update.message
+			|| (state.running
+				? _('A speed test is running; stop it before updating.')
+				: _('Ready to update.'));
+		versionText.textContent = update.version
+			? _('Target version') + ': ' + update.version : '';
+		logView.textContent = update.log_tail || '';
+		logView.style.display = update.log_tail ? '' : 'none';
+		reloadButton.style.display = (!busy && update.ok === true) ? '' : 'none';
+	}
+
+	function refresh() {
+		return Promise.all([
+			L.resolveDefault(callStatus(), null),
+			L.resolveDefault(callUpdateStatus(), null)
+		]).then(function(results) {
+			const status = results[0] || {};
+			const update = results[1] || {};
+			const wasUpdating = !!(state.update && state.update.updating);
+
+			state.running = !!(status.ok === true && status.data && status.data.running);
+			state.update = (update.ok === true && update.data) ? update.data : {};
+
+			if (wasUpdating && !state.update.updating && state.update.ok)
+				ui.addNotification(null, E('p', {},
+					_('Update finished. Refresh the page to use the new version.')));
+
+			render();
+		}).catch(function() {});
+	}
+
+	button.addEventListener('click', function() {
+		if (state.running || (state.update && state.update.updating))
+			return;
+
+		if (!confirm(_('Download and install the latest GitHub release? The page may reload after the update.')))
+			return;
+
+		button.disabled = true;
+		callUpdateStart().then(function(result) {
+			if (!result || result.ok !== true)
+				throw new Error((result && result.error) || _('Request failed'));
+			if (result.data && result.data.started === false)
+				throw new Error(result.data.error || _('Update refused'));
+
+			ui.addNotification(null, E('p', {}, _('Update started.')));
+			state.update = { updating: true, message: _('Starting…') };
+			render();
+			return refresh();
+		}).catch(function(e) {
+			ui.addNotification(null, E('p', {}, e.message || _('Request failed')));
+			render();
+		});
+	});
+
+	poll.add(refresh, 3);
+	render();
+
+	return E('div', { 'class': 'cbi-section' }, [
+		E('h3', {}, _('Online update')),
+		E('p', { 'class': 'cbi-section-descr' },
+			_('Downloads the latest GitHub release and installs it. Refused while a speed test is running.')),
+		E('div', { 'class': 'cbi-value' }, [
+			E('label', { 'class': 'cbi-value-title' }, _('Update status')),
+			E('div', { 'class': 'cbi-value-field' }, [
+				E('div', {}, [ statusText ]),
+				E('div', { 'class': 'cbi-value-description' }, [ versionText ]),
+				E('div', { 'class': 'cbi-page-actions' }, [ button, ' ', reloadButton ]),
+				logView
+			])
+		])
+	]);
+}
 
 function consoleUrl() {
 	const port = uci.get('cfpick', 'global', 'web_port') || '17544';
@@ -21,11 +146,17 @@ function consoleUrl() {
 
 return view.extend({
 	load: function() {
-		return uci.load('cfpick');
+		return Promise.all([
+			uci.load('cfpick'),
+			L.resolveDefault(callStatus(), null),
+			L.resolveDefault(callUpdateStatus(), null)
+		]);
 	},
 
-	render: function() {
+	render: function(data) {
 		let m, s, o;
+		const status = (data[1] && data[1].ok === true) ? data[1].data : {};
+		const update = (data[2] && data[2].ok === true) ? data[2].data : {};
 
 		m = new form.Map('cfpick', _('Settings'),
 			_('This page only configures the standalone web console entry. All speed-test settings and operations are in the console.'));
@@ -87,6 +218,9 @@ return view.extend({
 			});
 		};
 
-		return m.render();
+		const node = m.render();
+		node.appendChild(updateSection(status, update));
+
+		return node;
 	}
 });

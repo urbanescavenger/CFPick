@@ -103,6 +103,18 @@ class CloudflareClient:
     def _call(self, method, path, body=None):
         return self._call_raw(method, path, body).get("result")
 
+    def verify_token(self):
+        """Check that the configured API token is valid and active."""
+        result = self._call("GET", "/user/tokens/verify") or {}
+        status = str(result.get("status") or "").lower()
+        if status and status != "active":
+            raise DdnsError("Cloudflare API Token 状态为 %s" % result.get("status"))
+        return result
+
+    def zone(self, zone_id):
+        """Fetch a zone by ID, raising when the token cannot access it."""
+        return self._call("GET", "/zones/" + str(zone_id))
+
     def zone_id(self, zone_id="", zone_name="", domain=""):
         """Resolve the zone for a hostname; ``zone_id`` wins when configured."""
         if zone_id:
@@ -222,6 +234,32 @@ def _select(cfg, nodes, rows):
             entry["error"] = "没有可写入的 IP"
         planned.append(entry)
     return planned
+
+
+def verify(cfg):
+    """Validate the Cloudflare credentials without writing any DNS record.
+
+    Used by the settings page before committing a token: an invalid token used
+    to surface only at the end of a multi-minute speed test.
+    """
+    ddns_cfg = cfg.get("ddns") or {}
+    cloudflare = ddns_cfg.get("cloudflare") or {}
+    token = str(cloudflare.get("api_token") or "").strip()
+    if not token:
+        return {"ok": False, "error": "未配置 Cloudflare API Token"}
+
+    client = CloudflareClient(token)
+    try:
+        client.verify_token()
+        zone_id = str(cloudflare.get("zone_id") or "").strip()
+        zone_name = _clean_domain(cloudflare.get("zone_name"))
+        if zone_id:
+            client.zone(zone_id)
+        elif zone_name:
+            client.zone_id("", zone_name, "")
+        return {"ok": True, "error": ""}
+    except DdnsError as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def preview(cfg, nodes, rows, when=""):

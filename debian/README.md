@@ -163,6 +163,9 @@ sudo cfpick update-core --type all
 从**没有这个按钮的旧版本**第一次升级时，仍需在服务器执行一次上面的
 `deploy.sh --core none`；之后的版本更新可以直接在 Web 里点按钮。
 
+「程序更新」卡片右侧还有「卸载程序」按钮，行为等同于不带参数的
+`uninstall.sh`：停止 Web 服务并删除程序，保留配置、结果和日志。测速运行中会被拒绝。
+
 ### 卸载
 
 ```bash
@@ -170,7 +173,8 @@ sudo /opt/cfpick/uninstall.sh            # 保留配置、结果、日志
 sudo /opt/cfpick/uninstall.sh --purge    # 全部删除
 ```
 
-也可以在仓库里运行 `sudo sh debian/uninstall.sh`。
+也可以在仓库里运行 `sudo sh debian/uninstall.sh`；或在 Web「内核 → 程序更新」
+卡片点击「卸载程序」（默认保留数据）。
 
 ## 首次使用
 
