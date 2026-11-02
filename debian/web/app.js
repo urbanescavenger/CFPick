@@ -764,6 +764,13 @@
 	// ── settings form ───────────────────────────────────────────────────
 	const CRON_FIELDS = ['schedule_minute', 'schedule_hour', 'schedule_day',
 		'schedule_month', 'schedule_weekday'];
+	const CRON_LABELS = {
+		schedule_minute: '分钟',
+		schedule_hour: '小时',
+		schedule_day: '日',
+		schedule_month: '月',
+		schedule_weekday: '星期',
+	};
 	const CRON_PRESETS = {
 		hourly: '0 * * * *',
 		'half-hourly': '*/30 * * * *',
@@ -774,10 +781,19 @@
 		monthly: '0 3 1 * *',
 	};
 
+	function normalizeCronText(value) {
+		// Chinese IMEs in full-width mode turn "12" into "１２", which looks
+		// like "1 2" and would fail cron validation.  Convert to half-width.
+		return String(value || '')
+			.replace(/[！-～]/g,
+				(ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+			.replace(/　/g, ' ');
+	}
+
 	function cronParts() {
 		return CRON_FIELDS.map((id) => {
 			const node = $('#' + id);
-			return node ? node.value.trim() : '';
+			return node ? normalizeCronText(node.value).trim() : '';
 		});
 	}
 
@@ -785,7 +801,7 @@
 		const parts = String(expression || '').trim().split(/\s+/);
 		CRON_FIELDS.forEach((id, index) => {
 			const node = $('#' + id);
-			if (node) node.value = parts[index] || '*';
+			if (node) node.value = normalizeCronText(parts[index] || '*');
 		});
 	}
 
@@ -794,7 +810,24 @@
 	}
 
 	function updateCronPreview() {
-		setText('schedule-preview', cronExpression());
+		const parts = cronParts();
+		const hasSpace = parts.some((part) => /\s/.test(part));
+		setText('schedule-preview', parts.map((part) => part || '*').join(' ') +
+			(hasSpace ? '   ⚠ 字段内不要用空格，多个值请用逗号' : ''));
+	}
+
+	function cronFieldError() {
+		const parts = cronParts();
+		for (let index = 0; index < parts.length; index += 1) {
+			const label = CRON_LABELS[CRON_FIELDS[index]];
+			const value = parts[index];
+			if (!value) return label + '不能为空';
+			if (/\s/.test(value))
+				return label + '字段不能包含空格；多个值请用逗号分隔，例如 1,2';
+			if (!/^[0-9A-Za-z*,/-]+$/.test(value))
+				return label + '字段包含不支持的字符（请用半角数字/字母）';
+		}
+		return '';
 	}
 
 	function matchCronPreset(expression) {
@@ -813,7 +846,12 @@
 		updateCronPreview();
 	}
 
-	function onCronInput() {
+	function onCronInput(event) {
+		const node = event && event.currentTarget;
+		if (node) {
+			const normalized = normalizeCronText(node.value);
+			if (normalized !== node.value) node.value = normalized;
+		}
 		const select = $('#schedule_preset');
 		if (select) select.value = matchCronPreset(cronExpression());
 		updateCronPreview();
@@ -913,10 +951,8 @@
 			}),
 		});
 		const parts = cronParts();
-		if (parts.some((part) => !part))
-			throw new Error('定时任务的分、时、日、月、星期都不能为空');
-		if (parts.some((part) => !/^[0-9A-Za-z*,/-]+$/.test(part)))
-			throw new Error('定时任务包含不支持的字符，只允许数字、字母、* , / -');
+		const cronError = cronFieldError();
+		if (cronError) throw new Error(cronError);
 		cfg.schedule = Object.assign({}, cfg.schedule, {
 			enabled: check('schedule_enabled'),
 			custom_enabled: true,

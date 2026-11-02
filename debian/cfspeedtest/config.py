@@ -129,9 +129,29 @@ def _clean_text(value, default=""):
     return str(value).strip()
 
 
+def _halfwidth(value):
+    """Convert full-width ASCII forms that Chinese IMEs produce.
+
+    Typing ``12`` with an IME in full-width mode yields ``１２`` (U+FF11
+    U+FF12), which looks like ``1 2`` and would otherwise fail cron
+    validation.  U+3000 (ideographic space) becomes a normal space.
+    """
+    out = []
+    for char in str(value or ""):
+        code = ord(char)
+        if 0xFF01 <= code <= 0xFF5E:
+            out.append(chr(code - 0xFEE0))
+        elif code == 0x3000:
+            out.append(" ")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
 def _clean_domain(value):
     """Hostnames are stored lower-case and without the trailing root dot."""
-    return _clean_text(value).lower().rstrip(".")
+    text = _halfwidth(_clean_text(value)).lower().replace("。", ".")
+    return text.rstrip(".")
 
 
 def _ttl(value):
@@ -338,7 +358,9 @@ def normalize(data):
     # A config that only has the old ``hour`` field keeps interval semantics;
     # anything else defaults to the five-field expression.
     legacy_interval = "custom_enabled" not in schedule and "hour" in schedule
-    custom_cron = _clean_text(schedule.get("custom_cron"), DEFAULT_CONFIG["schedule"]["custom_cron"])
+    custom_cron = _clean_text(_halfwidth(schedule.get("custom_cron")),
+                              DEFAULT_CONFIG["schedule"]["custom_cron"])
+    custom_cron = " ".join(custom_cron.split())
     if not valid_cron(custom_cron):
         custom_cron = DEFAULT_CONFIG["schedule"]["custom_cron"]
     cfg["schedule"] = {

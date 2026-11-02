@@ -84,6 +84,27 @@ class NormalizeTests(unittest.TestCase):
         self.assertFalse(legacy["schedule"]["custom_enabled"])
         self.assertEqual(legacy["schedule"]["hour"], 6)
 
+    def test_fullwidth_input_is_normalized(self):
+        # Chinese IMEs in full-width mode produce "１２" for "12".
+        cfg = config.normalize({
+            "nodes": [{
+                "name": "jp", "link": "vless://u@h:443#jp",
+                "ddns_domain": "ＪＰ．ＥＸＡＭＰＬＥ．ＣＯＭ",
+            }],
+            "schedule": {
+                "custom_enabled": True,
+                "custom_cron": "0 １２ * * *",
+            },
+        })
+        self.assertEqual(cfg["schedule"]["custom_cron"], "0 12 * * *")
+        self.assertEqual(cfg["nodes"][0]["ddns_domain"], "jp.example.com")
+
+        cfg = config.normalize({"schedule": {
+            "custom_enabled": True,
+            "custom_cron": "0 1，2 * * *",
+        }})
+        self.assertEqual(cfg["schedule"]["custom_cron"], "0 1,2 * * *")
+
     def test_invalid_structured_cron_falls_back(self):
         cfg = config.normalize({"schedule": {
             "custom_enabled": True,

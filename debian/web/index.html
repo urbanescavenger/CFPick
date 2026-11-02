@@ -252,9 +252,10 @@
         </div>
         <p class="muted">
           标准五段 cron：分 时 日 月 星期，支持 <code>*</code>、数字、范围
-          <code>1-5</code>、列表 <code>1,15</code>、步长 <code>*/6</code>，月份和星期也
-          可以用 <code>jan-dec</code> / <code>sun-sat</code>。星期 <code>0</code> 和
-          <code>7</code> 都表示周日；「日」和「星期」同时限定时，cron 是“或”关系。
+          <code>1-5</code>、列表 <code>1,2</code>、步长 <code>*/6</code>，月份和星期也
+          可以用 <code>jan-dec</code> / <code>sun-sat</code>。多个值用<b>逗号</b>分隔，
+          字段内不要用空格。星期 <code>0</code> 和 <code>7</code> 都表示周日；
+          「日」和「星期」同时限定时，cron 是“或”关系。
         </p>
         <p class="muted">即将写入：
           <code id="schedule-preview">0 3 * * *</code>
