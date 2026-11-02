@@ -22,6 +22,19 @@ config global 'global'
 	option download_test_time '10'
 	option iterate_enabled '0'
 	option iterate_minutes '30'
+	# 独立测速：启用后统一测速改用本机 mihomo/Xray 内核（cfst core），
+	# 不再调用 PassWall 的 run_socks；关闭则保持原 PassWall 行为。
+	option standalone_enabled '0'
+	option standalone_core 'xray'
+	# 按节点 DDNS：worker 表里填了 ddns_domain 的节点只写 Cloudflare DNS，
+	# 不回写 PassWall 节点。
+	option ddns_enabled '0'
+	option ddns_ip_count '1'
+	option ddns_ttl '300'
+	option ddns_api_token ''
+	option ddns_zone_id ''
+	option ddns_zone_name ''
+	option ddns_proxied '0'
 
 # Standalone management console (cfst-web).  Disabled by default; enable in
 # LuCI and set the admin password in the console on first use.

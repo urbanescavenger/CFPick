@@ -22,7 +22,10 @@ const GLOBAL_KEYS = [
 	'node_test_probes', 'node_test_threads', 'download_test_enabled',
 	'download_test_count', 'download_test_url', 'download_test_time',
 	'iterate_enabled', 'iterate_minutes', 'custom_cron_enabled', 'custom_cron',
-	'hour', 'node_test_node', 'stable_node'
+	'hour', 'node_test_node', 'stable_node',
+	'ddns_enabled', 'ddns_ip_count', 'ddns_ttl', 'ddns_api_token',
+	'ddns_zone_id', 'ddns_zone_name', 'ddns_proxied',
+	'standalone_enabled', 'standalone_core'
 ];
 
 const SERVER_BOOL_KEYS = [
@@ -466,6 +469,8 @@ function save_workers(cur, workers) {
 		let item = (type(workers[i]) == 'object') ? workers[i] : {};
 		let node = clean_text(item.node, 64);
 		let ip_list = clean_text(item.ip_list, 16);
+		let ddns_domain = replace(
+			replace(clean_text(item.ddns_domain, 253), /。/, '.'), /\.+$/, '');
 
 		if (node == '')
 			continue;
@@ -476,6 +481,9 @@ function save_workers(cur, workers) {
 		if (ip_list != '' && !match(ip_list, /^list[1-5]$/))
 			return 'worker IP 列表无效';
 
+		if (ddns_domain != '' && !match(ddns_domain, /^[A-Za-z0-9][A-Za-z0-9.-]*$/))
+			return 'worker DDNS 域名无效';
+
 		let name;
 
 		if (used < length(existing))
@@ -485,6 +493,7 @@ function save_workers(cur, workers) {
 
 		cur.set(CONFIG, name, 'node', node);
 		cur.set(CONFIG, name, 'ip_list', ip_list);
+		cur.set(CONFIG, name, 'ddns_domain', ddns_domain);
 		used++;
 	}
 
@@ -531,7 +540,8 @@ function read_config() {
 		push(workers, {
 			name: section['.name'] || '',
 			node: section.node || '',
-			ip_list: section.ip_list || ''
+			ip_list: section.ip_list || '',
+			ddns_domain: section.ddns_domain || ''
 		});
 	});
 
@@ -591,6 +601,13 @@ function save_config(req) {
 		download_test_time: to_int(input.download_test_time, 10, 1, 60),
 		iterate_enabled: to_bool(input.iterate_enabled),
 		iterate_minutes: to_int(input.iterate_minutes, 30, 1, 10080),
+		ddns_enabled: to_bool(input.ddns_enabled),
+		ddns_ip_count: to_int(input.ddns_ip_count, 1, 1, 10),
+		ddns_ttl: to_int(input.ddns_ttl, 300, 1, 86400),
+		ddns_api_token: clean_text(input.ddns_api_token, 200),
+		ddns_zone_id: clean_text(input.ddns_zone_id, 64),
+		ddns_zone_name: replace(clean_text(input.ddns_zone_name, 253), /\.+$/, ''),
+		ddns_proxied: to_bool(input.ddns_proxied),
 		custom_cron_enabled: cron_enabled,
 		custom_cron: cron,
 		hour: to_int(input.hour, 24, 1, 24),
@@ -771,14 +788,43 @@ function dispatch(req) {
 			: (action == 'retest' ? 'api_run_retest' : 'api_run_stop'), {}));
 	}
 	else if (action == 'standalone') {
-		// The standalone engine's rpcd methods return their payload directly
-		// (they are also usable from LuCI/external scripts), so wrap them in
-		// the console's {ok,data} envelope here.
+		// The standalone-core rpcd methods return their payload directly (they
+		// are also usable from external scripts), so wrap them in the console's
+		// {ok,data} envelope here.
 		send(req, ok(ubus_call('standalone_status', {})));
 	}
-	else if (action == 'standalone_start' || action == 'standalone_stop' ||
-	         action == 'standalone_enable' || action == 'standalone_disable') {
-		send(req, ok(ubus_call(action, {})));
+	else if (action == 'standalone_update_core' && method == 'POST') {
+		let body = body_json() || {};
+		let type = (body.type == 'mihomo' || body.type == 'xray') ? body.type : 'all';
+		let pid = trim(fs.readfile('/tmp/cfst-core-update.pid') || '');
+		let busy = (match(pid, /^[0-9]+$/) &&
+			system('kill -0 ' + pid + ' 2>/dev/null') == 0) ? true : false;
+
+		if (busy) {
+			send(req, ok({ started: false, busy: true, type: type }));
+		}
+		else {
+			// ucode's system() runs through the shell: background the download
+			// and remember its PID so the status action can show progress.
+			system("nohup /usr/bin/cfst update-core --type " + type +
+				" >/tmp/cfst-core-update.log 2>&1 & " +
+				"echo $! >/tmp/cfst-core-update.pid");
+			send(req, ok({ started: true, type: type }));
+		}
+	}
+	else if (action == 'standalone_save' && method == 'POST') {
+		let body = body_json() || {};
+		let cur = uci.cursor();
+		try { cur.load(CONFIG); } catch (e) {}
+		cur.set(CONFIG, 'global', 'standalone_enabled',
+			to_bool(body.enabled));
+		cur.set(CONFIG, 'global', 'standalone_core',
+			body.core == 'mihomo' ? 'mihomo' : 'xray');
+		cur.commit(CONFIG);
+		send(req, ok({
+			enabled: to_bool(body.enabled) == '1',
+			core: body.core == 'mihomo' ? 'mihomo' : 'xray'
+		}));
 	}
 	else if (action == 'config') {
 		if (method == 'POST')

@@ -16,9 +16,7 @@
 				"passwall-speedtest": [
 					"start", "start_retest", "stop",
 					"api_run_start", "api_run_retest", "api_run_stop",
-					"api_web_reset",
-					"standalone_start", "standalone_stop",
-					"standalone_enable", "standalone_disable"
+					"api_web_reset"
 				]
 			},
 			"uci": [ "passwall-speedtest" ]

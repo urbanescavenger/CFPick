@@ -24,7 +24,6 @@ mkdir -p "$pkgdir"
 if [ -d debian/cfspeedtest ]; then
 	mkdir -p "$pkgdir/usr/lib/cf-speedtest"
 	cp -R debian/cfspeedtest "$pkgdir/usr/lib/cf-speedtest/"
-	cp -R debian/web "$pkgdir/usr/lib/cf-speedtest/"
 	cp -R debian/data "$pkgdir/usr/lib/cf-speedtest/"
 fi
 # 包内全是文本文件: sh/uc/js/json/txt/py 及无扩展名的 init.d/uci-defaults/config

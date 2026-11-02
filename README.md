@@ -73,26 +73,30 @@ The console calls the same `api_*` management API, so it always shows the same d
 *   The console is intended for LAN use over plain HTTP. For remote access use a VPN or a TLS reverse proxy; do not expose port 17544 directly to the internet.
 *   Service script: `/etc/init.d/cfst-web`; the port, listen address and username come from the UCI options `web_port`, `web_bind` and `web_user`. Saving the settings reloads the service.
 
-## Standalone Engine (built-in mihomo / Xray-core)
+## Standalone Core Mode (optional backend for the unified test)
 
-Since 2.1 the package also ships an **engine that does not use PassWall's `run_socks`** (source in `debian/`, installed to `/usr/lib/cf-speedtest`). It starts a local mihomo or Xray-core process, writes each candidate Cloudflare IP into a throw-away core config and probes it with curl through a private SOCKS port. Nodes are maintained as share links; PassWall node `address` fields are never rewritten.
+Since 2.1 the **Standalone** tab in the operations console can switch the unified test to a locally managed mihomo / Xray-core:
 
-*   **Two cores**: mihomo and Xray-core, selectable. Existing `/usr/bin/mihomo` and `/usr/bin/xray` (usually installed by PassWall) are reused; if missing, the console's "Cores" tab downloads them from GitHub into `/etc/cf-speedtest/state/core`.
-*   **No double proxying**: core outbounds carry `mark 255` (mihomo `routing-mark`, Xray `sockopt.mark`), which matches PassWall's existing `meta mark 255 return` in its OUTPUT chains. Router-local traffic may be globally proxied, but the test stays single-hop: local SOCKS → node. **No PassWall configuration changes are needed.** For cores without mark support (ss/hysteria2), use the Xray core or temporarily add the target IP to `psw_vps` (runtime nftset; no config change, no restart).
-*   **Entry**: the **Standalone Engine** tab inside the operations console (`http://<router-ip>:17544/` by default). It can enable/disable the service, start/stop the engine and open the engine console; LuCI no longer gets a separate page.
-*   **Standalone console**: `http://<router-ip>:17545/` by default, with a random access token generated on first install. The tab's "Open" button appends `?token=...` automatically. Listen address, port and token live in `/etc/cf-speedtest/config.json` (mode 0600).
+*   **Enable switch**: tick "Enable standalone core" and save. When enabled, every worker starts its candidate IP through the local core (`cfst core start`) instead of PassWall's `run_socks`; when disabled, the original PassWall flow is unchanged.
+*   **Same configuration**: workers are still the PassWall nodes from the **Nodes** tab; IP lists, probe/download settings and schedules are unchanged. There is no second node list or share-link config.
+*   **Two cores + self-upgrade**: choose mihomo or Xray-core. Existing `/usr/bin/mihomo` and `/usr/bin/xray` are reused; the tab can also install/upgrade a managed copy under `/etc/cf-speedtest/state/core`, independent of PassWall.
+*   **Hands off PassWall**: during the test the node `address` is not rewritten and the global node is not switched. Core outbounds carry `mark 255`, matching PassWall's `meta mark 255 return`, so the path stays single-hop (local SOCKS → node). **No PassWall configuration changes are needed.** If a node is incompatible with the selected core (ss/hysteria2, SS with plugin, VMess xhttp with mihomo, …), that node falls back to PassWall `run_socks` and the log says so.
+*   **Write-back**: the best IP of each worker is still written to its PassWall node, unless the worker has a DDNS domain (see below).
 *   **CLI**:
     ```sh
-    cfst status
-    cfst run start
-    cfst run retest
     cfst cores
     cfst update-core --type xray|mihomo|all
-    cfst cron list
+    cfst core start --node <id> --ip <candidate> --port <socks> --core xray --flag <flag>
+    cfst core stop --flag <flag>
     ```
-    Config, results, history and downloaded cores live in `/etc/cf-speedtest`; logs in `/tmp/log/cf-speedtest`.
 *   **Dependencies**: `python3-light`, `python3-urllib`, `python3-codecs`, `python3-openssl`, `python3-email`, `curl`, `ca-bundle` (installed automatically by the package).
-*   **Scope**: the standalone engine only exports results (`result.csv`, `result.json`, `best.json`). It does not write back to PassWall/hosts/DNS; use the PassWall-based flow above when write-back is needed.
+
+## Per-node DDNS (Cloudflare)
+
+*   Configure the token (optional Zone ID / Zone name, TTL, IPs per node, proxied flag) in **Settings → DDNS write-back (Cloudflare)** and enable it.
+*   Fill the **DDNS domain** column of a worker row in the **Nodes** tab.
+*   After a run, that worker's best IP is written to the domain's A/AAAA records and **its PassWall node is not rewritten**; workers without a domain keep the normal PassWall write-back.
+*   Domains must belong to the same Cloudflare zone; with no zone configured it is resolved from the domain. DDNS failures are logged and never invalidate the speed-test result.
 
 ## Management API
 

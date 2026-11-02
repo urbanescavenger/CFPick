@@ -365,80 +365,96 @@
 		$('#btn-stop').disabled = !running;
 	}
 
-	// ── 独立测速引擎（自带 mihomo / Xray 内核） ─────────────────────
+	// ── 独立内核模式（统一测速使用 mihomo / Xray） ─────────────────
 	async function refreshStandalone() {
 		state.standalone = await api('standalone');
 		renderStandalone();
 	}
 
-	function standaloneUrl(data) {
-		data = data || {};
-		const web = data.web || {};
+	function coreText(cores, type) {
+		const info = (cores && cores[type]) || {};
 
-		if (!web.port)
-			return '';
+		if (!info.installed)
+			return { title: '未安装', sub: '—' };
 
-		const host = window.location.hostname;
-		const hostPart = host.indexOf(':') >= 0 ? '[' + host + ']' : host;
-		const token = web.token ? '?token=' + encodeURIComponent(web.token) : '';
-
-		return 'http://' + hostPart + ':' + web.port + '/' + token;
+		return {
+			title: '已安装',
+			sub: (info.version || '—') + (info.path ? ' · ' + info.path : '')
+		};
 	}
 
 	function renderStandalone() {
 		const data = state.standalone || {};
-		const engine = data.engine || {};
-		const web = data.web || {};
-		const cores = engine.cores || {};
-		const type = engine.core_type || '';
-		const info = cores[type] || {};
-		const listen = web.listen || '';
-		const loopback = !listen || listen === '127.0.0.1'
-			|| listen === 'localhost' || listen === '::1';
-		const url = standaloneUrl(data);
+		const cores = (data.cores && data.cores.cores) || {};
+		const enabled = !!data.enabled;
+		const core = data.core === 'mihomo' ? 'mihomo' : 'xray';
+		const active = coreText(cores, core);
 
-		setText('sa-service', data.service_running ? '运行中' : '已停止');
-		setText('sa-service-sub', data.service_enabled ? '开机自启' : '未设开机自启');
-		setText('sa-engine', engine.running ? '测速运行中' : '空闲');
-		setText('sa-engine-sub', engine.phase ? phaseLabel(engine.phase) : '—');
-		setText('sa-core', type || '未检测');
-		setText('sa-core-sub', info.installed
-			? '已安装' + (info.version ? ' · ' + info.version : '')
-			: '未安装');
-		setText('sa-best', engine.best_ip || '—');
+		setText('sa-mode', enabled ? '独立内核' : 'PassWall');
+		setText('sa-mode-sub', enabled
+			? '统一测速走本机 ' + core
+			: '统一测速走 passwall run_socks');
+		setText('sa-core', core);
+		setText('sa-core-sub', active.title + (active.sub !== '—' ? ' · ' + active.sub : ''));
 
-		const input = $('#sa-url');
-		if (input)
-			input.value = url || '不可用';
+		const mihomo = coreText(cores, 'mihomo');
+		const xray = coreText(cores, 'xray');
+		setText('sa-mihomo', mihomo.title);
+		setText('sa-mihomo-sub', mihomo.sub);
+		setText('sa-xray', xray.title);
+		setText('sa-xray-sub', xray.sub);
 
-		$('#btn-sa-open').disabled = !url || !data.service_running || loopback;
-		$('#btn-sa-enable').disabled = !!data.service_enabled;
-		$('#btn-sa-disable').disabled = !data.service_enabled;
-		$('#btn-sa-start').disabled = !!data.service_running;
-		$('#btn-sa-stop').disabled = !data.service_running;
+		const enable = $('#sa-enabled');
+		if (enable)
+			enable.checked = enabled;
+
+		const select = $('#sa-core-select');
+		if (select)
+			select.value = core;
+
+		const updating = !!data.updating;
+		$('#btn-sa-update-mihomo').disabled = updating;
+		$('#btn-sa-update-xray').disabled = updating;
+		setText('sa-update-message', updating ? '内核更新中…' : '—');
+
+		const log = $('#sa-update-log');
+		if (log)
+			log.textContent = data.update_log || '';
 	}
 
-	async function standaloneAction(action, message) {
-		const buttons = ['#btn-sa-enable', '#btn-sa-start', '#btn-sa-stop', '#btn-sa-disable']
-			.map((id) => $(id));
-
-		buttons.forEach((button) => { button.disabled = true; });
+	async function saveStandalone() {
+		const enabled = $('#sa-enabled').checked;
+		const core = $('#sa-core-select').value === 'mihomo' ? 'mihomo' : 'xray';
 
 		try {
-			const result = await api('standalone_' + action, { method: 'POST' });
+			await api('standalone_save', {
+				method: 'POST',
+				body: { enabled: enabled, core: core }
+			});
+			toast('独立测速设置已保存');
+			await refreshStandalone();
+		}
+		catch (e) {
+			toast(e.message || '保存失败', true);
+		}
+	}
 
-			if (result && result.code != null && result.code !== 0)
-				toast('操作返回 ' + result.code, true);
-			else if (message)
-				toast(message);
+	async function updateStandaloneCore(type) {
+		try {
+			const result = await api('standalone_update_core', {
+				method: 'POST',
+				body: { type: type }
+			});
+
+			if (result && result.busy)
+				toast('内核正在更新，请稍候', true);
+			else
+				toast('已开始更新 ' + type);
 
 			await refreshStandalone();
 		}
 		catch (e) {
-			toast(e.message || '操作失败', true);
-		}
-		finally {
-			renderStandalone();
+			toast(e.message || '更新失败', true);
 		}
 	}
 
@@ -658,7 +674,7 @@
 
 		if (!state.workers.length) {
 			body.appendChild(el('tr', {}, [
-				el('td', { colspan: '3', class: 'empty' },
+				el('td', { colspan: '4', class: 'empty' },
 					'暂无 worker；测速将使用上面的「单节点测速」')
 			]));
 			return;
@@ -702,6 +718,16 @@
 			listSelect.value = worker.ip_list || '';
 			listSelect.addEventListener('change', () => { worker.ip_list = listSelect.value; });
 
+			const ddnsInput = el('input', {
+				type: 'text',
+				placeholder: '留空 = 写回 passwall',
+				spellcheck: 'false'
+			});
+			ddnsInput.value = worker.ddns_domain || '';
+			ddnsInput.addEventListener('input', () => {
+				worker.ddns_domain = ddnsInput.value.trim();
+			});
+
 			const remove = el('button', { type: 'button', 'class': 'btn small danger' }, '删除');
 			remove.addEventListener('click', () => {
 				state.workers.splice(index, 1);
@@ -711,13 +737,14 @@
 			body.appendChild(el('tr', {}, [
 				el('td', {}, nodeSelect),
 				el('td', {}, listSelect),
+				el('td', {}, ddnsInput),
 				el('td', {}, remove)
 			]));
 		});
 	}
 
 	function addWorker() {
-		state.workers.push({ node: '', ip_list: '' });
+		state.workers.push({ node: '', ip_list: '', ddns_domain: '' });
 		renderWorkers();
 	}
 
@@ -813,7 +840,8 @@
 
 		state.workers = ((state.config && state.config.workers) || []).map((item) => ({
 			node: item.node || '',
-			ip_list: item.ip_list || ''
+			ip_list: item.ip_list || '',
+			ddns_domain: item.ddns_domain || ''
 		}));
 		state.servers = (state.config && state.config.servers) || {};
 
@@ -841,6 +869,13 @@
 		setValue('cfg-dl-time', g.download_test_time);
 		setCheck('cfg-iter-enabled', g.iterate_enabled);
 		setValue('cfg-iter-minutes', g.iterate_minutes);
+		setCheck('cfg-ddns-enabled', g.ddns_enabled);
+		setValue('cfg-ddns-count', g.ddns_ip_count);
+		setValue('cfg-ddns-ttl', g.ddns_ttl);
+		setValue('cfg-ddns-token', g.ddns_api_token);
+		setValue('cfg-ddns-zone-id', g.ddns_zone_id);
+		setValue('cfg-ddns-zone-name', g.ddns_zone_name);
+		setCheck('cfg-ddns-proxied', g.ddns_proxied);
 		setCheck('cfg-schedule-enabled', g.enabled);
 
 		let expression = g.custom_cron || '0 3 * * *';
@@ -1041,6 +1076,13 @@
 				download_test_time: intValue('cfg-dl-time', 10),
 				iterate_enabled: checkValue('cfg-iter-enabled'),
 				iterate_minutes: intValue('cfg-iter-minutes', 30),
+				ddns_enabled: checkValue('cfg-ddns-enabled'),
+				ddns_ip_count: intValue('cfg-ddns-count', 1),
+				ddns_ttl: intValue('cfg-ddns-ttl', 300),
+				ddns_api_token: textValue('cfg-ddns-token'),
+				ddns_zone_id: textValue('cfg-ddns-zone-id'),
+				ddns_zone_name: textValue('cfg-ddns-zone-name'),
+				ddns_proxied: checkValue('cfg-ddns-proxied'),
 				custom_cron_enabled: true,
 				custom_cron: cron,
 				hour: 24,
@@ -1055,7 +1097,11 @@
 			})),
 			workers: state.workers
 				.filter((item) => !!String(item.node || '').trim())
-				.map((item) => ({ node: String(item.node).trim(), ip_list: item.ip_list || '' })),
+				.map((item) => ({
+					node: String(item.node).trim(),
+					ip_list: item.ip_list || '',
+					ddns_domain: String(item.ddns_domain || '').trim()
+				})),
 			servers: {
 				ssr_enabled: checkValue('tp-ssr-enabled'),
 				ssr_services: selectedValues('tp-ssr-services'),
@@ -1189,16 +1235,9 @@
 		$('#btn-sa-refresh').addEventListener('click', () => {
 			refreshStandalone().catch((e) => toast(e.message || '刷新失败', true));
 		});
-		$('#btn-sa-enable').addEventListener('click', () => standaloneAction('enable', '已启用并启动'));
-		$('#btn-sa-start').addEventListener('click', () => standaloneAction('start', '已启动'));
-		$('#btn-sa-stop').addEventListener('click', () => standaloneAction('stop', '已停止'));
-		$('#btn-sa-disable').addEventListener('click', () => standaloneAction('disable', '已停用'));
-		$('#btn-sa-open').addEventListener('click', () => {
-			const url = standaloneUrl(state.standalone);
-
-			if (url)
-				window.open(url, '_blank');
-		});
+		$('#btn-sa-save').addEventListener('click', saveStandalone);
+		$('#btn-sa-update-mihomo').addEventListener('click', () => updateStandaloneCore('mihomo'));
+		$('#btn-sa-update-xray').addEventListener('click', () => updateStandaloneCore('xray'));
 
 		$('#btn-add-worker').addEventListener('click', addWorker);
 		$('#btn-log-clear').addEventListener('click', () => { $('#log-view').textContent = ''; });

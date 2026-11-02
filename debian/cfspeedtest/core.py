@@ -400,6 +400,12 @@ def validate_proxy(proxy, core_type="mihomo"):
             raise CoreError(
                 "mihomo 当前仅支持 VLESS 的 xhttp；这个 %s xhttp 节点请改用 Xray 内核"
                 % (proxy_type or "未知"))
+        # VLESS encryption (e.g. mlkem768x25519plus) is an Xray extension that
+        # mihomo does not understand.  Fall back to Xray for these nodes.
+        encryption = str(proxy.get("encryption") or "").strip().lower()
+        if encryption and encryption != "none":
+            raise CoreError(
+                "mihomo 不支持该 VLESS encryption（%s），请改用 Xray 内核" % encryption)
         return
     if proxy_type not in ("vless", "vmess", "trojan", "ss"):
         raise CoreError("xray 内核不支持 %s 节点，请改用 mihomo 内核" % (proxy_type or "未知"))

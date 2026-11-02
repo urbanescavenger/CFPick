@@ -30,7 +30,7 @@ endef
 define StandaloneEnginePrepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/root/usr/lib/cf-speedtest
 	$(CP) -R $(CURDIR)/debian/cfspeedtest $(PKG_BUILD_DIR)/root/usr/lib/cf-speedtest/
-	$(CP) -R $(CURDIR)/debian/web $(PKG_BUILD_DIR)/root/usr/lib/cf-speedtest/
+	# No web/ assets: the OpenWrt app uses the operations console for its UI.
 	$(CP) -R $(CURDIR)/debian/data $(PKG_BUILD_DIR)/root/usr/lib/cf-speedtest/
 endef
 

@@ -86,7 +86,7 @@ jobs:
       - name: Stage standalone engine
         run: |
           mkdir -p root/usr/lib/cf-speedtest
-          cp -R debian/cfspeedtest debian/web debian/data root/usr/lib/cf-speedtest/
+          cp -R debian/cfspeedtest debian/data root/usr/lib/cf-speedtest/
 
       - name: Copy source into SDKs
         run: |

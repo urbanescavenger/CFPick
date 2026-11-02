@@ -28,7 +28,7 @@
 *   **优化的界面与日志**：重新设计的状态展示；逐 IP 日志如 `进度: 走节点测速 [节点] 5/30 (16%) - 1.2.3.4 延迟 87ms 丢包 0.00 [保留]`。
 *   **中途停止不丢结果**：中途停止会触发 trap 清理 SOCKS、恢复节点 address，若无新结果则保留上一次结果。**用户手动停止第一轮时，已通过延迟的 IP 仍会完成下载实测**（每 worker 最多 `download_test_count` 个（上限 10）；所有 worker 停止探测后逐节点逐 IP 串行）后再写回；「首个 worker 已完成、其余自动提前停止」也一样，不再跳过其余 worker 的下载。
 *   **丰富的应用集成**：优选 IP 可自动应用到 SSR+ / Passwall / PassWall2 / Bypass / Vssr / HOST / MosDNS / astra-dns / 阿里云 DDNS。
-*   **独立内核测速（2.1）**：自带 mihomo / Xray-core 两套内核，通过分享链接测节点、用 `mark 255` 避开 PassWall 全局代理，完全不依赖 `run_socks`，也不需要改写 PassWall 节点。
+*   **独立内核测速（2.1）**：统一测速可切换到本机 mihomo / Xray-core 内核（同一套节点、IP 列表和参数），内核可独立安装/升级；启用后不再依赖 `run_socks`，也不需要改写 PassWall 节点。
 
 ## 界面页面
 
@@ -74,26 +74,30 @@
 *   操作台默认只建议在局域网使用（明文 HTTP）；远程访问请走 VPN 或带 TLS 的反向代理，不要把 17544 直接暴露到公网。
 *   服务脚本：`/etc/init.d/cfst-web`；端口、监听地址、用户名由 UCI 的 `web_port` / `web_bind` / `web_user` 控制，保存配置会触发服务重载。
 
-## 独立测速引擎（自带 mihomo / Xray 内核）
+## 独立内核模式（统一测速的可选项）
 
-2.1 起内置一套**不依赖 PassWall `run_socks` 的独立测速引擎**（源码在 `debian/`，OpenWrt 包内安装到 `/usr/lib/cf-speedtest`）。它直接拉起本机 mihomo 或 Xray-core，把候选 Cloudflare IP 写进一次性内核配置，用 curl 经本地 SOCKS 探测；节点用分享链接维护，不再改写 PassWall 节点的 `address`。
+2.1 起可以在操作台的 **「独立测速」** 页签里，把**统一测速**切换到本机 mihomo / Xray-core：
 
-*   **双内核**：mihomo 与 Xray-core 二选一。优先复用系统已有的 `/usr/bin/mihomo`、`/usr/bin/xray`（PassWall 通常已装）；缺失时可在操作台「内核」页从 GitHub 下载到 `/etc/cf-speedtest/state/core`。
-*   **不会被 PassWall 二次代理**：内核出站带 `mark 255`（mihomo 的 `routing-mark`、Xray 的 `sockopt.mark`），命中 PassWall OUTPUT 链里已有的 `meta mark 255 return`。因此即使路由器本机流量默认走全局代理，测速流量仍是「本地 SOCKS → 被测节点」单层；**不需要修改 PassWall 配置**。若使用 ss/hysteria2 等不支持 mark 的核心，请改用 Xray 内核，或临时把目标 IP 加入 `psw_vps`（运行时 nftset，不改配置、不重启）。
-*   **入口**：操作台（默认 `http://<路由器IP>:17544/`）的 **「独立测速」** 页签。页签内可启用/停用服务、启动/停止引擎，并打开独立操作台；LuCI 侧不再单独增加页面。
-*   **独立操作台**：默认 `http://<路由器IP>:17545/`，首次安装生成随机访问令牌；LuCI 页面的「打开独立操作台」会自动附加 `?token=...`。监听地址、端口和令牌保存在 `/etc/cf-speedtest/config.json`（0600）。
+*   **启用开关**：勾选「启用独立内核」并保存。启用后，「开始测速」的每个 worker 用本机内核拉起候选 IP 的本地 SOCKS（`cfst core start`），不再调用 PassWall 的 `run_socks`；关闭则完全保持原来的 PassWall 流程。
+*   **同一套配置**：节点仍是「节点」页里的 PassWall worker，IP 列表、探测/下载参数、定时任务都不变；不需要第二套节点或分享链接。
+*   **双内核 + 自助升级**：mihomo 与 Xray-core 二选一；优先复用系统 `/usr/bin/mihomo`、`/usr/bin/xray`，也可在页签里「安装/升级」到 `/etc/cf-speedtest/state/core`（独立于 PassWall 的内核）。
+*   **不碰 PassWall**：独立模式下测速期间不改写节点 `address`、不切换全局节点；内核出站带 `mark 255`，命中 PassWall OUTPUT 链的 `meta mark 255 return`，保持「本地 SOCKS → 被测节点」单层，**不需要修改 PassWall 配置**。节点类型与所选内核不兼容（如 ss/hysteria2、带 plugin 的 SS、VMess xhttp 选 mihomo 等）时，该节点自动回退 PassWall `run_socks`，并在日志里说明。
+*   **写回**：测完仍按原逻辑把各 worker 的最优 IP 写回 PassWall 节点；如果节点配置了 DDNS 域名，则该节点只写 DNS、不回写（见下）。
 *   **CLI**：
     ```sh
-    cfst status
-    cfst run start          # 按 config.json 的节点与候选 IP 跑一轮
-    cfst run retest
-    cfst cores              # 查看两个内核的安装状态与版本
+    cfst cores
     cfst update-core --type xray|mihomo|all
-    cfst cron list
+    cfst core start --node <id> --ip <candidate> --port <socks> --core xray --flag <flag>
+    cfst core stop --flag <flag>
     ```
-    配置、结果、历史与下载的内核都在 `/etc/cf-speedtest`；日志在 `/tmp/log/cf-speedtest`。
 *   **依赖**：`python3-light`、`python3-urllib`、`python3-codecs`、`python3-openssl`、`python3-email`、`curl`、`ca-bundle`（由 ipk 自动安装）。
-*   **定位差异**：独立引擎默认**只导出结果**（`result.csv` / `result.json` / `best.json`），不自动写回 PassWall / hosts / DNS；需要写回时继续用上面的 PassWall 测速流程。
+
+## 按节点 DDNS（Cloudflare）
+
+*   在操作台 **设置 → DDNS 写回（Cloudflare）** 卡里填写 API Token（可选 Zone ID / Zone 名称、TTL、每节点写入 IP 数、是否走 Cloudflare 代理），勾选启用。
+*   在 **节点** 页 worker 表的 **DDNS 域名** 列填该节点的域名。
+*   测速结束后：填了域名的 worker 把最优 IP 写入该域名的 A/AAAA 记录，**不再写回 PassWall 节点**；没填域名的 worker 照旧写回。
+*   域名需属于同一个 Cloudflare Zone；留空 Zone 时按域名自动查找。DDNS 失败只记日志，不影响测速结果。
 
 ## 管理 API
 

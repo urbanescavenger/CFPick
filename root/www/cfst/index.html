@@ -123,14 +123,9 @@
     <section id="pane-standalone" class="pane">
       <div class="cards">
         <div class="card stat">
-          <span class="label">操作台服务</span>
-          <strong id="sa-service">—</strong>
-          <span id="sa-service-sub" class="sub">—</span>
-        </div>
-        <div class="card stat">
-          <span class="label">引擎状态</span>
-          <strong id="sa-engine">—</strong>
-          <span id="sa-engine-sub" class="sub">—</span>
+          <span class="label">测速内核模式</span>
+          <strong id="sa-mode">—</strong>
+          <span id="sa-mode-sub" class="sub">—</span>
         </div>
         <div class="card stat">
           <span class="label">当前内核</span>
@@ -138,40 +133,52 @@
           <span id="sa-core-sub" class="sub mono">—</span>
         </div>
         <div class="card stat">
-          <span class="label">最优 IP</span>
-          <strong id="sa-best" class="mono">—</strong>
-          <span class="sub">最近一次结果</span>
+          <span class="label">mihomo</span>
+          <strong id="sa-mihomo">—</strong>
+          <span id="sa-mihomo-sub" class="sub mono">—</span>
+        </div>
+        <div class="card stat">
+          <span class="label">Xray-core</span>
+          <strong id="sa-xray">—</strong>
+          <span id="sa-xray-sub" class="sub mono">—</span>
         </div>
       </div>
 
       <div class="card">
         <div class="card-head">
-          <h2>独立测速（自带 mihomo / Xray 内核）</h2>
+          <h2>独立测速（统一测速使用本机内核）</h2>
           <div class="card-actions">
-            <button id="btn-sa-enable" type="button" class="btn small primary">启用并启动</button>
-            <button id="btn-sa-start" type="button" class="btn small">启动</button>
-            <button id="btn-sa-stop" type="button" class="btn small danger">停止</button>
-            <button id="btn-sa-disable" type="button" class="btn small">停用</button>
+            <button id="btn-sa-save" type="button" class="btn small primary">保存</button>
             <button id="btn-sa-refresh" type="button" class="btn small">刷新</button>
           </div>
         </div>
-        <p class="muted">
-          不经过 PassWall 的 run_socks：本机 mihomo / Xray-core 直接拉起候选 IP 的本地 SOCKS，
-          出站带 mark 255 避开 PassWall 对本机出站的二次代理。节点以分享链接维护，结果只导出
-          CSV/JSON，不改 PassWall 节点，也不需要修改 PassWall 配置。
-        </p>
-        <div class="grid">
-          <label class="span2">独立操作台地址
-            <input id="sa-url" type="text" readonly value="—">
+        <div class="grid three">
+          <label class="check span2"><input id="sa-enabled" type="checkbox"> 启用独立内核
+            <span class="muted">（启用后「开始测速」走 mihomo / Xray；关闭则依赖 PassWall run_socks）</span>
+          </label>
+          <label>使用的内核
+            <select id="sa-core-select">
+              <option value="xray">Xray-core</option>
+              <option value="mihomo">mihomo (Clash.Meta)</option>
+            </select>
           </label>
         </div>
-        <div class="card-actions">
-          <button id="btn-sa-open" type="button" class="btn primary">打开独立操作台</button>
-        </div>
         <p class="muted">
-          节点、IP 列表、内核切换 / 升级、定时任务都在独立操作台里维护；令牌会自动附加到链接。
-          服务未启动或只监听 127.0.0.1 时按钮不可用。
+          独立模式不改写 PassWall 节点 address，也不切换全局节点；节点、IP 列表、探测/下载参数
+          仍用本操作台的配置。节点类型与选中内核不兼容时自动回退 PassWall run_socks。
         </p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>内核安装 / 升级</h2>
+          <div class="card-actions">
+            <button id="btn-sa-update-mihomo" type="button" class="btn small">安装/升级 mihomo</button>
+            <button id="btn-sa-update-xray" type="button" class="btn small">安装/升级 Xray</button>
+          </div>
+        </div>
+        <p id="sa-update-message" class="muted">—</p>
+        <pre id="sa-update-log" class="log-view" style="max-height:180px"></pre>
       </div>
     </section>
 
@@ -183,10 +190,10 @@
           <label>单节点测速（无 worker 时使用） <select id="cfg-test-node"></select></label>
           <label>稳定节点（必选） <select id="cfg-stable-node"></select></label>
         </div>
-        <p class="muted">worker 表：每个 PassWall 节点一个 worker，并指派使用的 CM IP 列表；留空列表使用第一个启用的列表。测速期间 PassWall 全局节点会临时切到「稳定节点」。</p>
+        <p class="muted">worker 表：每个 PassWall 节点一个 worker，并指派使用的 CM IP 列表；留空列表使用第一个启用的列表。填了 DDNS 域名的 worker 只把最优 IP 写到 Cloudflare DNS，不再写回 PassWall 节点；留空则照旧写回。</p>
         <div class="table-wrap">
           <table class="data">
-            <thead><tr><th>PassWall 节点</th><th>CM IP 列表</th><th></th></tr></thead>
+            <thead><tr><th>PassWall 节点</th><th>CM IP 列表</th><th>DDNS 域名</th><th></th></tr></thead>
             <tbody id="cfg-workers-body"></tbody>
           </table>
         </div>
@@ -253,6 +260,20 @@
           <label>单 IP 时限 (s) <input id="cfg-dl-time" type="number" min="1" max="60" step="1"></label>
           <label class="span2">下载 URL <input id="cfg-dl-url" type="text" spellcheck="false"></label>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>DDNS 写回（Cloudflare）</h2></div>
+        <div class="grid three">
+          <label class="check"><input id="cfg-ddns-enabled" type="checkbox"> 启用 DDNS 写回</label>
+          <label>每节点写入 IP 数 <input id="cfg-ddns-count" type="number" min="1" max="10" step="1"></label>
+          <label>TTL (s) <input id="cfg-ddns-ttl" type="number" min="1" max="86400" step="1"></label>
+          <label class="span2">Cloudflare API Token <input id="cfg-ddns-token" type="password" autocomplete="off"></label>
+          <label>Zone ID（可选） <input id="cfg-ddns-zone-id" type="text" spellcheck="false"></label>
+          <label>Zone 名称（可选） <input id="cfg-ddns-zone-name" type="text" spellcheck="false" placeholder="example.com"></label>
+          <label class="check"><input id="cfg-ddns-proxied" type="checkbox"> 记录走 Cloudflare 代理</label>
+        </div>
+        <p class="muted">worker 表里填了 DDNS 域名的节点只把最优 IP 写到 DNS，不再写回 PassWall 节点；未填域名的节点照旧写回。域名需属于同一个 Cloudflare Zone，留空 Zone 时按域名自动查找。</p>
       </div>
 
       <div class="card">

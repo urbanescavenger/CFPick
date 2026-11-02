@@ -133,7 +133,7 @@ reap_stale_run_dirs() {
 }
 
 function read_config(){
-    get_global_config "enabled" "custom_cron_enabled" "custom_cron" "tl" "tll" "tlr" "ip_source" "custom_ip_file" "custom_allip" "ip_online_url" "ip_online_regions" "node_test_node" "stable_node" "node_test_url" "node_test_count" "node_test_timeout" "node_test_probes" "node_test_threads" "download_test_enabled" "download_test_count" "download_test_url" "download_test_time" "iterate_enabled" "iterate_minutes"
+    get_global_config "enabled" "custom_cron_enabled" "custom_cron" "tl" "tll" "tlr" "ip_source" "custom_ip_file" "custom_allip" "ip_online_url" "ip_online_regions" "node_test_node" "stable_node" "node_test_url" "node_test_count" "node_test_timeout" "node_test_probes" "node_test_threads" "download_test_enabled" "download_test_count" "download_test_url" "download_test_time" "iterate_enabled" "iterate_minutes" "standalone_enabled" "standalone_core"
     get_servers_config "ssr_services" "ssr_enabled" "passwall_enabled" "passwall_services" "passwall2_enabled" "passwall2_services" "bypass_enabled" "bypass_services" "vssr_enabled" "vssr_services" "DNS_enabled" "AliDNS_ip_count" "HOST_enabled" "MosDNS_enabled" "MosDNS_ip_count" "openclash_restart" "AstraDNS_enabled" "AstraDNS_config" "AstraDNS_bin"
     # 五个 CM 备选 IP 列表（ip_list 命名段 list1..list5）
     local _n
@@ -483,6 +483,8 @@ function speed_test(){
     # 日志只在整次测速入口处理一次：上次运行日志滚动归档为 .log.1~.log.5
     # （须在拿到运行锁之后再轮转：否则被跳过的本次会把在跑会话的日志轮转走）
     rotate_log_files
+    # 节点 -> DDNS 域名映射：配置了域名的节点只写 DNS、不回写 passwall。
+    nt_build_ddns_map
     # 走节点测速：把候选 CF IP 写进 passwall 节点 address，用 passwall app.sh run_socks
     # 拉本地 SOCKS，curl -I 取 time_pretransfer 测延迟，多 worker 并行、多 probe fail-fast。
     # 结果写回各 passwall worker 节点。
@@ -580,7 +582,29 @@ nt_rollback() {
 nt_apply_best_addresses() {
     local _rf="$1"
     local _mw _ip _tmp _edits _um _mismatch="" _count=0
-    [ -s "$_rf" ] || return 1
+    if [ ! -s "$_rf" ]; then
+        # 空清单：所有待测节点都配置了 DDNS，不需要写回 passwall。仍要用测前快照
+        # 还原测速期间为 run_socks 改写的 address（独立内核模式本来就没改，等价）。
+        if [ -n "${NT_SNAP_FILE}" ] && [ -f "${NT_SNAP_FILE}" ]; then
+            if cmp -s "${NT_SNAP_FILE}" /etc/config/passwall; then
+                NT_SNAPSHOT_REAPPLIED=1
+                NT_NO_PASSWALL_RESTART=1
+                echolog "本次无需写回 passwall（节点均已配置 DDNS），配置未变化，跳过 passwall 重启"
+                return 0
+            fi
+            uci -q revert passwall 2>/dev/null
+            if cp "${NT_SNAP_FILE}" /etc/config/passwall 2>/dev/null; then
+                NT_SNAPSHOT_REAPPLIED=1
+                NT_NO_PASSWALL_RESTART=0
+                echolog "本次无需写回 passwall（节点均已配置 DDNS），已还原测前配置"
+                return 0
+            fi
+            echolog "警告：还原 passwall 快照失败"
+            return 1
+        fi
+        return 1
+    fi
+    NT_NO_PASSWALL_RESTART=0
     if [ -z "${NT_SNAP_FILE}" ] || [ ! -f "${NT_SNAP_FILE}" ]; then
         # 无快照兜底（正常不可达：两条调用路径都在 nt_snapshot 失败时中止）
         echolog "警告：无测前快照，退化为逐节点 uci set 写回"
@@ -696,6 +720,55 @@ nt_lock_acquire() {
 }
 nt_lock_release() { rmdir "${NT_LOCKDIR}" 2>/dev/null; }
 
+# ── 独立内核 / DDNS 辅助 ────────────────────────────────────────────────
+# 独立内核模式（设置页「独立测速」启用）：用本机 mihomo/Xray 拉起候选 IP 的
+# 本地 SOCKS（cfst core start），不再调用 passwall 的 run_socks。cfst 会把
+# passwall 的 UCI 节点转换成内核配置并打 mark 255；失败（节点类型不兼容、
+# 内核未安装等）时回退 run_socks，保证统一测速不中断。
+nt_start_node_socks() {
+    local _W=$1 _ip=$2 _port=$3 _flag=$4
+    mkdir -p /tmp/etc/passwall 2>/dev/null
+    if [ "${standalone_enabled:-0}" = "1" ]; then
+        if /usr/bin/cfst core start --node "$_W" --ip "$_ip" --port "$_port" \
+             --core "${standalone_core:-xray}" --flag "$_flag" >>"$LOG_FILE" 2>&1; then
+            return 0
+        fi
+        # 只写日志、不写 stdout：nt_probe_one_ip 的 stdout 是探测结果，混入日志行
+        # 会让调用方把日志当结果解析，整轮 IP 被误判为 [丢弃]。
+        echolog "独立内核启动失败（节点 ${_W}，内核 ${standalone_core:-xray}），回退 PassWall run_socks" >/dev/null
+        # 回退路径需要 run_socks 从节点 address 读候选 IP；独立内核分支平时不改写
+        # address，这里补一次（带 uci 串行锁，避免多 worker 并发丢更新）。
+        nt_lock_acquire
+        uci set passwall.${_W}.address="${_ip}" 2>/dev/null
+        uci commit passwall 2>/dev/null
+        nt_lock_release
+    fi
+    NO_REC_PROCESS=1 /usr/share/passwall/app.sh run_socks \
+        flag="${_flag}" node=${_W} bind=127.0.0.1 socks_port=${_port} \
+        config_file=${_flag}.json >>$LOG_FILE 2>&1
+}
+
+# 节点配置了 DDNS 域名时，最优 IP 只写 DNS、不回写 passwall 节点。映射在
+# 会话目录里建一次（node<TAB>domain）；结果不依赖 passwall 节点 address。
+nt_build_ddns_map() {
+    NT_DDNS_MAP="${RUN_DIR}/ddns_domains"
+    : > "$NT_DDNS_MAP" 2>/dev/null || { NT_DDNS_MAP=""; return 0; }
+    local _sec _node _dom
+    for _sec in $(uci -q show passwall-speedtest 2>/dev/null | \
+            sed -n "s/^\(passwall-speedtest\.@node_ip\[[0-9]*\]\)\.node=.*/\1/p"); do
+        _node=$(uci -q get "${_sec}.node" 2>/dev/null)
+        _dom=$(uci -q get "${_sec}.ddns_domain" 2>/dev/null)
+        [ -n "$_node" ] && [ -n "$_dom" ] && printf '%s\t%s\n' "$_node" "$_dom" >> "$NT_DDNS_MAP"
+    done
+    return 0
+}
+nt_node_has_ddns() {
+    # DDNS 总开关关闭时，即使节点填了域名也照旧写回 passwall。
+    [ "$(uci -q get passwall-speedtest.global.ddns_enabled 2>/dev/null)" = "1" ] || return 1
+    [ -n "${NT_DDNS_MAP:-}" ] && [ -s "$NT_DDNS_MAP" ] || return 1
+    awk -F '\t' -v n="$1" '$1 == n { found=1 } END { exit(found ? 0 : 1) }' "$NT_DDNS_MAP"
+}
+
 # 下载实测的串行性由结构保证：所有 worker 停止后，主进程按 worker 顺序逐个执行
 # nt_download_stage，不存在跨进程并发下载，故不再需要下载串行锁。
 
@@ -758,23 +831,23 @@ nt_scan_running() {
     [ "$_stop" = "1" ]
 }
 
-# 对单个候选 IP 经节点 $_W 探测一次（uci 改 address → run_socks → probes 次 curl → 清理）。
-# 供普通 worker 与迭代 worker 共用。uci set+commit 经锁串行化；run_socks+探测在锁外并行。
+# 对单个候选 IP 经节点 $_W 探测一次（uci 改 address 或独立内核 → probes 次 curl → 清理）。
+# 供普通 worker 与迭代 worker 共用。uci set+commit 经锁串行化；核心启动+探测在锁外并行。
 # stdout 输出一行: "keep sent recv loss avg"（keep=1 保留/0 丢弃）；日志不走 stdout。
 # 参数: $1=node $2=ip $3=probe_url $4=timeout $5=probes $6=socks_port $7=flag
 nt_probe_one_ip() {
     local _W=$1 _ip=$2 _purl=$3 _tmo=$4 _probes=$5 _port=$6 _flag=$7
-    # uci set+commit 加锁（防多 worker 并发改 staging 丢更新）
-    nt_lock_acquire
-    uci set passwall.${_W}.address="${_ip}"
-    uci commit passwall
-    nt_lock_release
-    # 拉本地 SOCKS（passwall 重启/异常时可能清掉该目录，缺目录会导致 run_socks 写配置失败）
+    # 独立内核模式不改写节点 address；PassWall 模式仍需写 address 供 run_socks 读取。
+    if [ "${standalone_enabled:-0}" != "1" ]; then
+        # uci set+commit 加锁（防多 worker 并发改 staging 丢更新）
+        nt_lock_acquire
+        uci set passwall.${_W}.address="${_ip}"
+        uci commit passwall
+        nt_lock_release
+    fi
+    # 拉本地 SOCKS（passwall 重启/异常时可能清掉该目录，缺目录会导致写配置失败）
     mkdir -p /tmp/etc/passwall 2>/dev/null
-    NO_REC_PROCESS=1 /usr/share/passwall/app.sh run_socks \
-        flag="${_flag}" node=${_W} \
-        bind=127.0.0.1 socks_port=${_port} \
-        config_file=${_flag}.json >>$LOG_FILE 2>&1
+    nt_start_node_socks "$_W" "$_ip" "$_port" "$_flag"
     # 就绪轮询 + 多探测（任一次非成功即 fail=1 并跳出，该 IP 整体丢弃）
     local _sent=0 _recv=0 _lat="" _done=0 _notready=0 _fail=0
     while [ $_done -lt $_probes ]; do
@@ -805,7 +878,10 @@ nt_probe_one_ip() {
                 ;;
         esac
     done
-    # 清理本次 SOCKS
+    # 清理本次 SOCKS（独立内核用 cfst 的 pid 精确停掉，下面的 pgrep 再兜底）
+    if [ "${standalone_enabled:-0}" = "1" ]; then
+        /usr/bin/cfst core stop --flag "$_flag" >/dev/null 2>&1
+    fi
     local _pf
     for _pf in /tmp/etc/passwall/*"${_flag}"*_plugin.pid; do
         [ -s "$_pf" ] && kill -9 "$(head -n1 "$_pf")" >/dev/null 2>&1
@@ -849,31 +925,32 @@ NT_DL_SPEED=0
 nt_download_one_ip() {
     local _W=$1 _ip=$2 _durl=$3 _tmo=$4 _port=$5 _flag=$6
     NT_DL_SPEED=0
-    nt_lock_acquire
-    uci set passwall.${_W}.address="${_ip}"
-    uci commit passwall
-    nt_lock_release
+    # 独立内核模式不改写节点 address；PassWall 模式仍需写 address 供 run_socks 读取。
+    if [ "${standalone_enabled:-0}" != "1" ]; then
+        nt_lock_acquire
+        uci set passwall.${_W}.address="${_ip}"
+        uci commit passwall
+        nt_lock_release
+    fi
     mkdir -p /tmp/etc/passwall 2>/dev/null
-    # 先删掉同 flag 的旧配置：保证下面校验用的一定是本次 run_socks 刚生成的文件，
-    # 而不是历史残留（flag 含 PID+IP 序号，正常情况下不会重名，这里再兜一层）
-    rm -f "/tmp/etc/passwall/${_flag}.json" "/tmp/etc/passwall/${_flag}.json_test.log" 2>/dev/null
-    NO_REC_PROCESS=1 /usr/share/passwall/app.sh run_socks \
-        flag="${_flag}" node=${_W} \
-        bind=127.0.0.1 socks_port=${_port} \
-        config_file=${_flag}.json >>$LOG_FILE 2>&1
+    # 先删掉同 flag 的旧配置：保证下面校验用的一定是本次刚生成的文件，而不是历史残留
+    # （flag 含 PID+IP 序号，正常情况下不会重名，这里再兜一层）。独立内核用 .yaml。
+    rm -f "/tmp/etc/passwall/${_flag}.json" "/tmp/etc/passwall/${_flag}.yaml" \
+        "/tmp/etc/passwall/${_flag}.json_test.log" 2>/dev/null
+    nt_start_node_socks "$_W" "$_ip" "$_port" "$_flag"
     # ── 链路校验：证明下载确实经过候选 IP ──
-    # passwall app.sh run_socks 会把本次生成的客户端配置写到
-    # /tmp/etc/passwall/<config_file>（即 /tmp/etc/passwall/<flag>.json）。这份配置就是
-    # 本地 SOCKS 进程实际使用的出站配置，其中出站服务器地址必须是我们刚写入节点 address
-    # 的候选 IP。文件缺失（run_socks 写配置失败）或不含该 IP（复用了旧配置）时，测出的
-    # 速度与候选 IP 无关，直接判本次失败，绝不把脏速度写进结果。
+    # 本次生成的客户端配置写在 /tmp/etc/passwall/<flag>.json（Xray/run_socks）或
+    # <flag>.yaml（mihomo）。这份配置就是本地 SOCKS 进程实际使用的出站配置，其中出站
+    # 服务器地址必须是我们刚写入节点 address / 传给 cfst 的候选 IP。文件缺失或不含该 IP
+    # 时，测出的速度与候选 IP 无关，直接判本次失败，绝不把脏速度写进结果。
     local _cfg="/tmp/etc/passwall/${_flag}.json" _verify=1
+    [ -s "$_cfg" ] || _cfg="/tmp/etc/passwall/${_flag}.yaml"
     if [ ! -s "$_cfg" ]; then
         _verify=0
-        echolog "下载测速校验失败：SOCKS 配置 ${_cfg} 不存在（run_socks 未生成配置），跳过该 IP"
+        echolog "下载测速校验失败：内核配置 ${_cfg} 不存在（未生成配置），跳过该 IP"
     elif ! grep -qF -- "$_ip" "$_cfg" 2>/dev/null; then
         _verify=0
-        echolog "下载测速校验失败：SOCKS 配置未指向候选 IP ${_ip}，跳过该 IP"
+        echolog "下载测速校验失败：内核配置未指向候选 IP ${_ip}，跳过该 IP"
     fi
     # 就绪轮询（curl rc 7 = SOCKS 尚未就绪）+ 一次下载测速。--max-time 截断时 curl 返回 28，
     # 但已下载字节数与平均速度仍然有效，故 0 / 28 都接受（前提是 HTTP 2xx 且确实收到数据）。
@@ -891,7 +968,10 @@ nt_download_one_ip() {
         fi
         break
     done
-    # 清理本次 SOCKS（与延迟探测一致，按 flag 前缀精确通配）
+    # 清理本次 SOCKS（独立内核用 cfst 的 pid 精确停掉，下面的 pgrep 再兜底）
+    if [ "${standalone_enabled:-0}" = "1" ]; then
+        /usr/bin/cfst core stop --flag "$_flag" >/dev/null 2>&1
+    fi
     for _pf in /tmp/etc/passwall/*"${_flag}"*_plugin.pid; do
         [ -s "$_pf" ] && kill -9 "$(head -n1 "$_pf")" >/dev/null 2>&1
     done
@@ -1410,8 +1490,11 @@ node_speed_test() {
             case " $valid_workers " in *" ${stable_node} "*) echolog "稳定节点 ${stable_node} 与待测 worker 重叠，中止（稳定节点不得在待测集合内）"; return 1 ;; esac
             # 测前快照 /etc/config/passwall：测后还原以抹掉 passwall 测速中途新增的异常节点段
             nt_snapshot || { echolog "passwall 快照失败，中止"; return 1; }
-            # 拉起 worker 之前切 passwall 全局节点到稳定节点（测后由 node_test_cleanup 还原）
-            nt_switch_tcp_node || { echolog "稳定节点校验失败，中止"; node_test_cleanup; trap - EXIT INT TERM; return 1; }
+            # 拉起 worker 之前切 passwall 全局节点到稳定节点（测后由 node_test_cleanup 还原）。
+            # 独立内核模式不改写节点 address，也不需要动 passwall 全局节点，直接跳过。
+            if [ "${standalone_enabled:-0}" != "1" ]; then
+                nt_switch_tcp_node || { echolog "稳定节点校验失败，中止"; node_test_cleanup; trap - EXIT INT TERM; return 1; }
+            fi
             # 并发上限 + 首个有效结果即停：维持 threads 个并发，轮询各 worker 完成标记；
             # 任一 worker 跑完全部候选 IP 且保留≥1 个有效 IP（写 .done）时，立即终止其余
             # worker，跳到合并阶段按已有（含被杀 worker 的部分）结果排序。无有效结果的
@@ -1513,8 +1596,12 @@ node_speed_test() {
                 local mwname
                 mwname="$(uci -q get "passwall.${mw}.remarks" 2>/dev/null)"; mwname="${mwname:-$mw}"
                 if [ -n "$mwbest" ]; then
-                    printf '%s\t%s\n' "$mw" "$mwbest" >> "$reapply"
-                    echolog "走节点测速完成 [${mwname}]，最优 IP ${mwbest} 待写回 passwall 节点"
+                    if nt_node_has_ddns "$mw"; then
+                        echolog "走节点测速完成 [${mwname}]，最优 IP ${mwbest} 将写入 DDNS 域名（不回写 passwall 节点）"
+                    else
+                        printf '%s\t%s\n' "$mw" "$mwbest" >> "$reapply"
+                        echolog "走节点测速完成 [${mwname}]，最优 IP ${mwbest} 待写回 passwall 节点"
+                    fi
                 else
                     echolog "走节点测速 [${mwname}] 结果为空，保留原 address"
                 fi
@@ -1547,9 +1634,18 @@ node_speed_test() {
             # 在快照里就是测前原值，一次 restart 同时让各 worker 最优 IP + 原始全局节点生效。
             echolog "开始写回：各节点最优 IP 写入 passwall 配置（原子替换，此阶段不可中断，请稍候）"
             if nt_apply_best_addresses "$reapply"; then
-                /etc/init.d/passwall restart >/dev/null 2>&1 || echolog "警告：passwall restart 失败，最优 IP 可能未实时生效"
+                [ "${NT_NO_PASSWALL_RESTART:-0}" = "1" ] || \
+                    /etc/init.d/passwall restart >/dev/null 2>&1 || \
+                    echolog "警告：passwall restart 失败，最优 IP 可能未实时生效"
             else
                 echolog "警告：最优 IP 未写入 passwall 配置，收尾按测前配置回滚"
+            fi
+            # DDNS：配置了 ddns_domain 的节点，最优 IP 写到 Cloudflare DNS；这些节点
+            # 已在上面排除出 passwall 写回清单。DDNS 失败不影响测速结果。
+            if [ "$(uci -q get passwall-speedtest.global.ddns_enabled 2>/dev/null)" = "1" ]; then
+                echolog "开始写入 DDNS：按节点最优 IP 更新 Cloudflare DNS"
+                /usr/bin/cfst ddns uci-apply --result "$merged" >>"$LOG_FILE" 2>&1 || \
+                    echolog "警告：DDNS 写入失败（不影响测速结果）"
             fi
             rotate_result_files
             mv -f "$merged" "$IP_FILE"
@@ -1602,8 +1698,11 @@ node_speed_test() {
     echolog "提示：测速期间源节点 ${NODE_TEST_NODE} 的 address 会被反复改写，该节点会短暂抖动，测完写回最优 IP"
 
     result_tmp="$(mktemp "${RUN_DIR}/result.csv.tmp.XXXXXX")" || { echolog "创建临时测速结果文件失败"; return 1; }
-    # inline 调用 worker 之前切 passwall 全局节点到稳定节点（测后由 node_test_cleanup 还原）
-    nt_switch_tcp_node || { echolog "稳定节点校验失败，中止"; node_test_cleanup; trap - EXIT INT TERM; return 1; }
+    # inline 调用 worker 之前切 passwall 全局节点到稳定节点（测后由 node_test_cleanup 还原）。
+    # 独立内核模式不改写节点 address，也不需要动 passwall 全局节点，直接跳过。
+    if [ "${standalone_enabled:-0}" != "1" ]; then
+        nt_switch_tcp_node || { echolog "稳定节点校验失败，中止"; node_test_cleanup; trap - EXIT INT TERM; return 1; }
+    fi
     # 单节点：inline 调用 worker（不 background），端口 48900、flag=base
     if [ "${ITERATE_MODE:-0}" = "1" ]; then
         # 限时迭代：该节点跑独立收敛循环到时限，结果文件同路径，末尾统一合并写回（仅一次）
@@ -1650,17 +1749,30 @@ node_speed_test() {
 
     # ── 写回配置 → 重启生效 → 发布结果（同多 worker 路径：先落盘配置，再发布结果）──
     bestip=$(first_result_ip "$result_tmp")
-    local _reapply
+    local _reapply _ddns_node=0
     _reapply="$(mktemp "${RUN_DIR}/node_test_reapply.XXXXXX")"
-    printf '%s\t%s\n' "${NODE_TEST_NODE}" "${bestip}" > "$_reapply"
-    echolog "开始写回：节点 ${NODE_TEST_NODE} 最优 IP ${bestip} 写入 passwall 配置（原子替换，此阶段不可中断，请稍候）"
+    if nt_node_has_ddns "${NODE_TEST_NODE}"; then
+        _ddns_node=1
+        echolog "节点 ${NODE_TEST_NODE} 配置了 DDNS，最优 IP ${bestip} 写入 DNS，不回写 passwall 节点"
+    else
+        printf '%s\t%s\n' "${NODE_TEST_NODE}" "${bestip}" > "$_reapply"
+        echolog "开始写回：节点 ${NODE_TEST_NODE} 最优 IP ${bestip} 写入 passwall 配置（原子替换，此阶段不可中断，请稍候）"
+    fi
     if nt_apply_best_addresses "$_reapply"; then
-        /etc/init.d/passwall restart >/dev/null 2>&1 || echolog "警告：passwall restart 失败，最优 IP 可能未实时生效"
-        echolog "走节点测速完成，最优 IP ${bestip} 已写入 passwall 节点 ${NODE_TEST_NODE}（已清理测速期间 passwall 新增的异常节点）"
+        [ "${NT_NO_PASSWALL_RESTART:-0}" = "1" ] || \
+            /etc/init.d/passwall restart >/dev/null 2>&1 || \
+            echolog "警告：passwall restart 失败，最优 IP 可能未实时生效"
+        [ "$_ddns_node" = "1" ] || \
+            echolog "走节点测速完成，最优 IP ${bestip} 已写入 passwall 节点 ${NODE_TEST_NODE}（已清理测速期间 passwall 新增的异常节点）"
     else
         echolog "警告：最优 IP 未写入 passwall 配置，收尾按测前配置回滚"
     fi
     rm -f "$_reapply"
+    if [ "$(uci -q get passwall-speedtest.global.ddns_enabled 2>/dev/null)" = "1" ]; then
+        echolog "开始写入 DDNS：按节点最优 IP 更新 Cloudflare DNS"
+        /usr/bin/cfst ddns uci-apply --result "$result_tmp" >>"$LOG_FILE" 2>&1 || \
+            echolog "警告：DDNS 写入失败（不影响测速结果）"
+    fi
     rotate_result_files
     mv -f "$result_tmp" "$IP_FILE"
     rm -f "${RUN_DIR}/.nt_committing" 2>/dev/null
