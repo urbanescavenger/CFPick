@@ -15,19 +15,19 @@ const callReset = rpc.declare({
 const callStatus = rpc.declare({
 	object: 'cfpick',
 	method: 'api_status',
-	expect: { ok: false, data: {} }
+	expect: {}
 });
 
 const callUpdateStatus = rpc.declare({
 	object: 'cfpick',
 	method: 'api_update_status',
-	expect: { ok: false, data: {} }
+	expect: {}
 });
 
 const callUpdateStart = rpc.declare({
 	object: 'cfpick',
 	method: 'api_update_start',
-	expect: { ok: false, data: {} }
+	expect: {}
 });
 
 function updateSection(initialStatus, initialUpdate) {
