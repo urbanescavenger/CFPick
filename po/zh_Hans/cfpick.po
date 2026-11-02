@@ -742,5 +742,5 @@ msgstr "检查中…"
 msgid "Check failed"
 msgstr "检查更新失败"
 
-msgid "Check for the latest GitHub release first; the update button is enabled only when a newer version is available. Updates are refused while a speed test is running."
-msgstr "先点「检查更新」校验 GitHub 最新 Release；只有存在新版本时「在线更新」才可用。测速运行中拒绝更新。"
+msgid "Check the latest GitHub release; the update button is enabled only when a newer version is available."
+msgstr "检查 GitHub 最新 Release；只有存在新版本时「在线更新」才可用。"

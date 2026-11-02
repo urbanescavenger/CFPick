@@ -45,10 +45,7 @@ function updateSection(initialStatus, initialUpdate) {
 	};
 
 	const statusText = E('span', {}, _('Ready to update.'));
-	const versionText = E('span', {}, '');
-	const logView = E('pre', {
-		style: 'max-height:220px;overflow:auto;white-space:pre-wrap;font-family:monospace;font-size:12px;margin:8px 0 0'
-	}, '');
+	const versionText = E('span', { 'class': 'cbi-value-description' }, '');
 	const checkButton = E('button', {
 		type: 'button',
 		'class': 'btn cbi-button'
@@ -91,9 +88,6 @@ function updateSection(initialStatus, initialUpdate) {
 					' · ' + (state.check.available ? _('Update available') : _('Already up to date'));
 		}
 		versionText.textContent = info;
-
-		logView.textContent = update.log_tail || '';
-		logView.style.display = update.log_tail ? '' : 'none';
 		reloadButton.style.display = (!busy && update.ok === true) ? '' : 'none';
 	}
 
@@ -186,15 +180,20 @@ function updateSection(initialStatus, initialUpdate) {
 
 	return E('div', { 'class': 'cbi-section' }, [
 		E('h3', {}, _('Online update')),
-		E('p', { 'class': 'cbi-section-descr' },
-			_('Check for the latest GitHub release first; the update button is enabled only when a newer version is available. Updates are refused while a speed test is running.')),
+		E('p', { 'class': 'cbi-section-descr', style: 'margin-bottom:8px' },
+			_('Check the latest GitHub release; the update button is enabled only when a newer version is available.')),
 		E('div', { 'class': 'cbi-value' }, [
 			E('label', { 'class': 'cbi-value-title' }, _('Update status')),
 			E('div', { 'class': 'cbi-value-field' }, [
-				E('div', {}, [ statusText ]),
-				E('div', { 'class': 'cbi-value-description' }, [ versionText ]),
-				E('div', { 'class': 'cbi-page-actions' }, [ checkButton, ' ', button, ' ', reloadButton ]),
-				logView
+				E('div', { style: 'display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px' }, [
+					statusText,
+					versionText
+				]),
+				E('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px' }, [
+					checkButton,
+					button,
+					reloadButton
+				])
 			])
 		])
 	]);

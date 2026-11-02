@@ -1399,17 +1399,12 @@ function app_update_status_data() {
 	let alive = (match(pid, /^[0-9]+$/) &&
 		system('kill -0 ' + pid + ' 2>/dev/null') == 0);
 	let info = {};
-	let log = read_file(APP_UPDATE_LOG);
 
 	try { info = json(read_file(APP_UPDATE_STATUS) || '{}') || {}; }
 	catch (e) { info = {}; }
 
-	if (length(log) > 4000)
-		log = substr(log, length(log) - 4000);
-
 	info.updating = alive || info.updating == true;
 	info.current_version = app_current_version();
-	info.log_tail = log;
 
 	return info;
 }
