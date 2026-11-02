@@ -23,6 +23,15 @@ config global 'global'
 	option iterate_enabled '0'
 	option iterate_minutes '30'
 
+# Standalone management console (cfst-web).  Disabled by default; enable in
+# LuCI and set the admin password in the console on first use.
+	option web_enabled '0'
+	option web_port '17544'
+	option web_bind '0.0.0.0'
+	option web_user 'admin'
+	option web_password ''
+	option web_timeout '3600'
+
 config servers 'servers'
 	option ssr_enabled '0'
 	option passwall_enabled '0'

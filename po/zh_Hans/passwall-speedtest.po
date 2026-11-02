@@ -580,3 +580,36 @@ msgstr "请求失败"
 
 msgid "Disabled"
 msgstr "未启用"
+
+msgid "Web Console"
+msgstr "Web 操作台"
+
+msgid "Enable standalone console"
+msgstr "启用独立操作台"
+
+msgid "Starts a separate web console on its own port with its own admin login. LuCI remains the full configuration page; the console provides the dashboard, run controls and common settings."
+msgstr "在独立端口启动一套 Web 操作台，使用单独的管理员登录。LuCI 保留完整配置页；操作台提供仪表盘、运行控制和常用设置。"
+
+msgid "Console port"
+msgstr "操作台端口"
+
+msgid "Port for the standalone console. The default 17544 avoids the LuCI web port and Lucky's usual 17543."
+msgstr "独立操作台的监听端口。默认 17544，避开 LuCI 端口和 Lucky 常用的 17543。"
+
+msgid "Listen address"
+msgstr "监听地址"
+
+msgid "0.0.0.0 listens on all interfaces (LAN access; WAN is still blocked by the firewall). Use a specific LAN address if needed."
+msgstr "0.0.0.0 表示监听所有接口（局域网可访问，WAN 仍由防火墙拦截）。需要时也可以填写具体的局域网地址。"
+
+msgid "Console username"
+msgstr "操作台用户名"
+
+msgid "The password is set on the console's first-run page and can be changed from the console settings; it is stored as a salted SHA-256 hash in UCI."
+msgstr "密码在操作台首次打开时设置，之后可在操作台设置中修改；UCI 中只保存加盐 SHA-256 哈希。"
+
+msgid "Open console"
+msgstr "打开操作台"
+
+msgid "The console listens on its own port. On first use it asks you to create the admin password. For remote access use a VPN or a TLS reverse proxy; do not expose the plain HTTP port to the internet."
+msgstr "操作台使用独立端口；首次打开会要求创建管理员密码。远程访问请走 VPN 或带 TLS 的反向代理，不要把明文 HTTP 端口直接暴露到公网。"

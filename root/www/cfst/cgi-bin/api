@@ -1,0 +1,600 @@
+#!/usr/bin/env ucode
+'use strict';
+
+// Standalone management console API, served by the separate cfst-web uhttpd
+// instance.  Uses LuCI's HTTP helper for request/response handling, but its
+// own username/password session so it does not depend on a LuCI login.
+
+import { stdin, stdout } from 'fs';
+import request from 'luci.http';
+
+const fs = require('fs');
+const uci = require('uci');
+const ubus = require('ubus');
+
+const CONFIG = 'passwall-speedtest';
+const SESSION_FILE = '/tmp/cfst-web.session';
+const DEFAULT_TIMEOUT = 3600;
+const MAX_BODY = 1024 * 1024;
+const GLOBAL_KEYS = [
+	'enabled', 'ip_source', 'ip_online_url', 'custom_ip_file', 'custom_allip',
+	'tl', 'tll', 'tlr', 'node_test_url', 'node_test_count', 'node_test_timeout',
+	'node_test_probes', 'node_test_threads', 'download_test_enabled',
+	'download_test_count', 'download_test_url', 'download_test_time',
+	'iterate_enabled', 'iterate_minutes', 'custom_cron_enabled', 'custom_cron',
+	'hour', 'node_test_node', 'stable_node'
+];
+
+const input_bufsize = 4096;
+let input_available = +getenv('CONTENT_LENGTH') || 0;
+
+function read(len) {
+	if (input_available == 0) {
+		stdin.close();
+		return null;
+	}
+
+	let chunk = stdin.read(min(input_available, len ?? input_bufsize, input_bufsize));
+
+	if (chunk == null) {
+		input_available = 0;
+		stdin.close();
+	}
+	else {
+		input_available -= length(chunk);
+	}
+
+	return chunk;
+}
+
+function write(data) {
+	return stdout.write(data);
+}
+
+function shquote(value) {
+	return "'" + replace('' + value, "'", "'\\''") + "'";
+}
+
+function sha256(text) {
+	let pipe = fs.popen("printf '%s' " + shquote(text) + " | sha256sum", 'r');
+	let out = '';
+
+	if (pipe) {
+		out = pipe.read('all') || '';
+		pipe.close();
+	}
+
+	let parts = split(trim(out), ' ');
+
+	return parts[0] || '';
+}
+
+function random_token() {
+	let token = replace(trim(fs.readfile('/proc/sys/kernel/random/uuid') || ''), /-/g, '');
+
+	return token || sprintf('%d-%d', time(), int(fs.readfile('/proc/uptime') || '0'));
+}
+
+function send(req, payload, status) {
+	if (status) {
+		let code = int(substr(status, 0, 3));
+		let message = trim(substr(status, 3));
+		req.status(code, message || 'OK');
+	}
+
+	req.header('Content-Type', 'application/json; charset=utf-8');
+	req.header('Cache-Control', 'no-store');
+	req.header('Referrer-Policy', 'no-referrer');
+	req.header('Content-Security-Policy',
+		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:");
+	req.write_json(payload);
+}
+
+function ok(data) {
+	return { ok: true, data: data, ts: time() };
+}
+
+function fail(message) {
+	return { ok: false, error: '' + message, ts: time() };
+}
+
+function read_body() {
+	let raw = '';
+	let chunk;
+
+	while ((chunk = read(65536)) != null) {
+		raw += chunk;
+		if (length(raw) > MAX_BODY)
+			break;
+	}
+
+	return raw;
+}
+
+function body_json() {
+	let raw = read_body();
+
+	if (raw == '')
+		return {};
+
+	try {
+		return json(raw) || {};
+	}
+	catch (e) {
+		return null;
+	}
+}
+
+function web_config() {
+	let cur = uci.cursor();
+	let cfg = { user: 'admin', password: '', timeout: DEFAULT_TIMEOUT };
+
+	try {
+		cur.load(CONFIG);
+		cfg.user = cur.get(CONFIG, 'global', 'web_user') || 'admin';
+		cfg.password = cur.get(CONFIG, 'global', 'web_password') || '';
+		cfg.timeout = int(cur.get(CONFIG, 'global', 'web_timeout')) || DEFAULT_TIMEOUT;
+	}
+	catch (e) {}
+
+	return cfg;
+}
+
+function make_password(password, salt) {
+	salt = salt || replace(random_token(), /-/g, '');
+
+	return salt + '$' + sha256(salt + ':' + password);
+}
+
+function verify_password(stored, password) {
+	let parts = split(stored || '', '$');
+
+	if (length(parts) != 2)
+		return false;
+
+	return sha256(parts[0] + ':' + password) == parts[1];
+}
+
+function session_save(user, timeout) {
+	let token = random_token();
+	let data = token + '\n' + user + '\n' + (time() + timeout) + '\n';
+	let fd = fs.open(SESSION_FILE, 'w');
+
+	if (fd) {
+		fd.write(data);
+		fd.close();
+	}
+
+	try { fs.chmod(SESSION_FILE, 0600); } catch (e) { system('chmod 600 ' + shquote(SESSION_FILE)); }
+
+	return token;
+}
+
+function session_load(req) {
+	let token = req.getcookie('cfst_session');
+
+	if (!token)
+		return null;
+
+	let lines = split(trim(fs.readfile(SESSION_FILE) || ''), '\n');
+
+	if (length(lines) < 3)
+		return null;
+
+	if (lines[0] != token || int(lines[2]) <= time())
+		return null;
+
+	return lines[1] || null;
+}
+
+function session_clear() {
+	try { fs.unlink(SESSION_FILE); } catch (e) {}
+}
+
+function set_session_cookie(req, token, timeout) {
+	req.header('Set-Cookie', sprintf(
+		'cfst_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d',
+		token, timeout));
+}
+
+function clear_session_cookie(req) {
+	req.header('Set-Cookie',
+		'cfst_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
+}
+
+function require_auth(req) {
+	return session_load(req);
+}
+
+function check_csrf(req) {
+	return req.getenv('HTTP_X_CFST_REQUEST') == '1';
+}
+
+function ubus_call(method, args) {
+	let conn = ubus.connect();
+
+	if (!conn)
+		die('无法连接 ubus');
+
+	try {
+		let result = conn.call('passwall-speedtest', method, args || {});
+
+		conn.disconnect();
+		return result;
+	}
+	catch (e) {
+		conn.disconnect();
+		die(e);
+	}
+}
+
+function uci_get(cur, section, option, fallback) {
+	let value = cur.get(CONFIG, section, option);
+
+	return (value == null) ? fallback : value;
+}
+
+function read_config() {
+	let cur = uci.cursor();
+	let global = {};
+	let lists = [];
+
+	try {
+		cur.load(CONFIG);
+	}
+	catch (e) {}
+
+	for (let i = 0; i < length(GLOBAL_KEYS); i++) {
+		let key = GLOBAL_KEYS[i];
+
+		global[key] = uci_get(cur, 'global', key, '');
+	}
+
+	for (let i = 1; i <= 5; i++) {
+		let section = 'list' + i;
+		let regions = uci_get(cur, section, 'regions', '');
+
+		if (type(regions) == 'array')
+			regions = join(' ', regions);
+
+		push(lists, {
+			enabled: uci_get(cur, section, 'enabled', '0') == '1',
+			name: uci_get(cur, section, 'name', ''),
+			regions: regions,
+			port: uci_get(cur, section, 'port', '443')
+		});
+	}
+
+	let workers = [];
+
+	cur.foreach(CONFIG, 'node_ip', function(section) {
+		push(workers, {
+			name: section['.name'] || '',
+			node: section.node || '',
+			ip_list: section.ip_list || ''
+		});
+	});
+
+	return { global: global, ip_lists: lists, workers: workers };
+}
+
+function to_bool(value) {
+	return (value === true || value === 1 || value == '1' || value == 'true') ? '1' : '0';
+}
+
+function to_int(value, fallback, minimum, maximum) {
+	let number = int(value);
+
+	if (number == 0 && '' + value != '0')
+		number = fallback;
+
+	if (minimum != null && number < minimum)
+		number = minimum;
+
+	if (maximum != null && number > maximum)
+		number = maximum;
+
+	return '' + number;
+}
+
+function to_float(value, fallback, minimum, maximum) {
+	let number = +value;
+
+	if (number != number)
+		number = fallback;
+
+	if (minimum != null && number < minimum)
+		number = minimum;
+
+	if (maximum != null && number > maximum)
+		number = maximum;
+
+	return sprintf('%.3f', number);
+}
+
+function clean_text(value, maxlen) {
+	let text = trim('' + (value ?? ''));
+
+	text = replace(text, /[\r\n]+/g, ' ');
+
+	return length(text) > maxlen ? substr(text, 0, maxlen) : text;
+}
+
+function valid_cron(expr) {
+	let parts = split(trim(expr || ''), ' ');
+
+	if (length(parts) != 5)
+		return false;
+
+	for (let i = 0; i < length(parts); i++)
+		if (!match(parts[i], /^[0-9A-Za-z*,\/-]+$/))
+			return false;
+
+	return true;
+}
+
+function valid_regions(value) {
+	let parts = split(replace(trim(value || ''), /[ ,]+/g, ' '), ' ');
+
+	for (let i = 0; i < length(parts); i++)
+		if (parts[i] != '' && !match(parts[i], /^[A-Za-z]{2}$/))
+			return false;
+
+	return true;
+}
+
+function save_config(req) {
+	let body = body_json();
+
+	if (body == null)
+		return send(req, fail('请求 JSON 无效'), '400 Bad Request');
+
+	let input = body.global || {};
+	let lists = body.ip_lists || [];
+	let cur = uci.cursor();
+	let changed = false;
+
+	try {
+		cur.load(CONFIG);
+	}
+	catch (e) {}
+
+	let ip_source = clean_text(input.ip_source, 32);
+	if (ip_source != '' && !match(ip_source, /^(builtin_ipv4|builtin_ipv6|online|custom_file)$/))
+		return send(req, fail('IP 来源无效'), '400 Bad Request');
+
+	let cron_enabled = to_bool(input.custom_cron_enabled);
+	let cron = clean_text(input.custom_cron, 128) || '0 3 * * *';
+	if (!valid_cron(cron))
+		return send(req, fail('定时 cron 必须是合法的五段表达式'), '400 Bad Request');
+
+	let stable = clean_text(input.stable_node, 64);
+	let test_node = clean_text(input.node_test_node, 64);
+	if (stable != '' && !match(stable, /^[A-Za-z0-9_]+$/))
+		return send(req, fail('稳定节点名称无效'), '400 Bad Request');
+	if (test_node != '' && !match(test_node, /^[A-Za-z0-9_]+$/))
+		return send(req, fail('测试节点名称无效'), '400 Bad Request');
+
+	let values = {
+		enabled: to_bool(input.enabled),
+		ip_source: ip_source || 'builtin_ipv4',
+		ip_online_url: clean_text(input.ip_online_url, 500),
+		custom_ip_file: clean_text(input.custom_ip_file, 500),
+		custom_allip: to_bool(input.custom_allip),
+		tl: to_int(input.tl, 200, 0, 60000),
+		tll: to_int(input.tll, 40, 0, 60000),
+		tlr: to_float(input.tlr, 0.2, 0, 1),
+		node_test_url: clean_text(input.node_test_url, 500),
+		node_test_count: to_int(input.node_test_count, 30, 1, 100000),
+		node_test_timeout: to_int(input.node_test_timeout, 5, 1, 120),
+		node_test_probes: to_int(input.node_test_probes, 3, 1, 5),
+		node_test_threads: to_int(input.node_test_threads, 5, 0, 128),
+		download_test_enabled: to_bool(input.download_test_enabled),
+		download_test_count: to_int(input.download_test_count, 5, 1, 10),
+		download_test_url: clean_text(input.download_test_url, 500),
+		download_test_time: to_int(input.download_test_time, 10, 1, 60),
+		iterate_enabled: to_bool(input.iterate_enabled),
+		iterate_minutes: to_int(input.iterate_minutes, 30, 1, 10080),
+		custom_cron_enabled: cron_enabled,
+		custom_cron: cron,
+		hour: to_int(input.hour, 24, 1, 24),
+		node_test_node: test_node,
+		stable_node: stable
+	};
+
+	for (let key in values) {
+		cur.set(CONFIG, 'global', key, values[key]);
+		changed = true;
+	}
+
+	if (type(lists) == 'array') {
+		for (let i = 0; i < 5; i++) {
+			let item = (i < length(lists) && type(lists[i]) == 'object') ? lists[i] : {};
+			let name = clean_text(item.name, 64);
+			let regions_raw = item.regions;
+
+			if (type(regions_raw) == 'array')
+				regions_raw = join(' ', regions_raw);
+
+			let regions = clean_text(regions_raw, 128);
+
+			if (!valid_regions(regions))
+				return send(req, fail('IP 列表国家码只能是两位字母'), '400 Bad Request');
+
+			let tokens = [];
+			let parts = split(replace(trim(regions), /[ ,]+/g, ' '), ' ');
+
+			for (let j = 0; j < length(parts); j++)
+				if (parts[j] != '')
+					push(tokens, uc(parts[j]));
+
+			cur.set(CONFIG, 'list' + (i + 1), 'enabled', to_bool(item.enabled));
+			cur.set(CONFIG, 'list' + (i + 1), 'name', name);
+			// Keep the UCI list form that LuCI's MultiValue expects.
+			cur.set(CONFIG, 'list' + (i + 1), 'regions', tokens);
+			cur.set(CONFIG, 'list' + (i + 1), 'port', to_int(item.port, 443, 1, 65535));
+			changed = true;
+		}
+	}
+
+	if (changed) {
+		cur.commit(CONFIG);
+		// The shell script owns the crontab line; reload rewrites it from UCI.
+		system('/etc/init.d/passwall-speedtest reload >/dev/null 2>&1');
+	}
+
+	send(req, ok(read_config()));
+}
+
+function dispatch(req) {
+	let action = req.message.params.action || 'hello';
+	let method = req.getenv('REQUEST_METHOD') || 'GET';
+	let cfg = web_config();
+	let user = require_auth(req);
+
+	if (action == 'hello') {
+		send(req, ok({
+			setup: cfg.password == '',
+			authenticated: user != null,
+			user: user || ''
+		}));
+		return;
+	}
+
+	if (action == 'login' && method == 'POST') {
+		let body = body_json() || {};
+		let supplied = '' + (body.user || '');
+		let password = '' + (body.password || '');
+
+		if (supplied != cfg.user || !verify_password(cfg.password, password)) {
+			system('sleep 1');
+			send(req, fail('用户名或密码错误'), '401 Unauthorized');
+			return;
+		}
+
+		let token = session_save(cfg.user, cfg.timeout);
+		set_session_cookie(req, token, cfg.timeout);
+		send(req, ok({ user: cfg.user }));
+		return;
+	}
+
+	if (action == 'setup' && method == 'POST') {
+		if (cfg.password != '') {
+			send(req, fail('管理员账号已设置'), '409 Conflict');
+			return;
+		}
+
+		let body = body_json() || {};
+		let name = clean_text(body.user, 32) || 'admin';
+		let password = '' + (body.password || '');
+
+		if (!match(name, /^[A-Za-z0-9_.-]+$/)) {
+			send(req, fail('用户名只能包含字母、数字、点、下划线和短横线'), '400 Bad Request');
+			return;
+		}
+
+		if (length(password) < 6) {
+			send(req, fail('密码至少 6 位'), '400 Bad Request');
+			return;
+		}
+
+		let cur = uci.cursor();
+		cur.load(CONFIG);
+		cur.set(CONFIG, 'global', 'web_user', name);
+		cur.set(CONFIG, 'global', 'web_password', make_password(password));
+		cur.commit(CONFIG);
+
+		let token = session_save(name, cfg.timeout);
+		set_session_cookie(req, token, cfg.timeout);
+		send(req, ok({ user: name }));
+		return;
+	}
+
+	if (action == 'logout') {
+		session_clear();
+		clear_session_cookie(req);
+		send(req, ok({}));
+		return;
+	}
+
+	if (!user) {
+		send(req, fail('未登录或会话已过期'), '401 Unauthorized');
+		return;
+	}
+
+	if (method == 'POST' && !check_csrf(req)) {
+		send(req, fail('缺少请求头'), '403 Forbidden');
+		return;
+	}
+
+	if (action == 'status') {
+		send(req, ubus_call('api_status', {}));
+	}
+	else if (action == 'results') {
+		send(req, ubus_call('api_results', {
+			limit: int(req.message.params.limit || 500)
+		}));
+	}
+	else if (action == 'history') {
+		send(req, ubus_call('api_history', {}));
+	}
+	else if (action == 'tasks') {
+		send(req, ubus_call('api_tasks', {}));
+	}
+	else if (action == 'nodes') {
+		send(req, ubus_call('api_nodes', {}));
+	}
+	else if (action == 'log') {
+		send(req, ubus_call('api_log', {
+			pos: int(req.message.params.pos || 0)
+		}));
+	}
+	else if (action == 'start' || action == 'retest' || action == 'stop') {
+		send(req, ubus_call(
+			action == 'start' ? 'api_run_start'
+			: (action == 'retest' ? 'api_run_retest' : 'api_run_stop'), {}));
+	}
+	else if (action == 'config') {
+		if (method == 'POST')
+			save_config(req);
+		else
+			send(req, ok(read_config()));
+	}
+	else if (action == 'password' && method == 'POST') {
+		let body = body_json() || {};
+		let current = '' + (body.current || '');
+		let next = '' + (body.next || '');
+
+		if (!verify_password(web_config().password, current)) {
+			send(req, fail('当前密码不正确'), '403 Forbidden');
+			return;
+		}
+
+		if (length(next) < 6) {
+			send(req, fail('新密码至少 6 位'), '400 Bad Request');
+			return;
+		}
+
+		let cur = uci.cursor();
+		cur.load(CONFIG);
+		cur.set(CONFIG, 'global', 'web_password', make_password(next));
+		cur.commit(CONFIG);
+		session_clear();
+		clear_session_cookie(req);
+		send(req, ok({ message: '密码已更新，请重新登录' }));
+	}
+	else {
+		send(req, fail('未知操作'), '404 Not Found');
+	}
+}
+
+let req = request(getenv(), read, write);
+
+try {
+	dispatch(req);
+}
+catch (e) {
+	send(req, fail(e), '500 Internal Server Error');
+}
+
+req.close();

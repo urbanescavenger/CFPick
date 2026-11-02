@@ -615,6 +615,40 @@ return view.extend({
 		});
 		o.default = '24';
 
+		// ── 独立 Web 操作台（cfst-web，第二个 uhttpd 实例）──
+		s.tab('web', _('Web Console'));
+
+		o = s.taboption('web', form.Flag, 'web_enabled', _('Enable standalone console'),
+			_('Starts a separate web console on its own port with its own admin login. LuCI remains the full configuration page; the console provides the dashboard, run controls and common settings.'));
+		o.default = o.disabled;
+		o.rmempty = false;
+
+		o = s.taboption('web', form.Value, 'web_port', _('Console port'),
+			_('Port for the standalone console. The default 17544 avoids the LuCI web port and Lucky\'s usual 17543.'));
+		o.datatype = 'port';
+		o.default = '17544';
+		o.rmempty = false;
+
+		o = s.taboption('web', form.Value, 'web_bind', _('Listen address'),
+			_('0.0.0.0 listens on all interfaces (LAN access; WAN is still blocked by the firewall). Use a specific LAN address if needed.'));
+		o.default = '0.0.0.0';
+		o.rmempty = false;
+
+		o = s.taboption('web', form.Value, 'web_user', _('Console username'),
+			_('The password is set on the console\'s first-run page and can be changed from the console settings; it is stored as a salted SHA-256 hash in UCI.'));
+		o.default = 'admin';
+		o.rmempty = false;
+
+		o = s.taboption('web', form.Button, '_web_open', _('Open console'),
+			_('The console listens on its own port. On first use it asks you to create the admin password. For remote access use a VPN or a TLS reverse proxy; do not expose the plain HTTP port to the internet.'));
+		o.onclick = function() {
+			const input = document.querySelector('[name="cbid.passwall-speedtest.global.web_port"]');
+			const port = (input && input.value) || '17544';
+			const host = window.location.hostname.indexOf(':') >= 0
+				? '[' + window.location.hostname + ']' : window.location.hostname;
+			window.open(window.location.protocol + '//' + host + ':' + port + '/', '_blank');
+		};
+
 		// ── 五个 CM 备选 IP 列表（共享 ip_online_url，仅国家/端口筛选不同）──
 		// 始终渲染，通过 data-depends 联动 ip_source 动态显隐（见 m.render().then 中的 cbi_d_add 注册）。
 		s = m.section(form.TableSection, 'ip_list', _('CM IP lists (per-country)'),

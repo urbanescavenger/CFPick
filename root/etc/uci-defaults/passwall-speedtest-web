@@ -1,0 +1,21 @@
+#!/bin/sh
+
+# Defaults for the standalone management console (cfst-web).  It stays
+# disabled until the user enables it in LuCI and sets an admin password in
+# the console on first use.
+
+uci -q get passwall-speedtest.global.web_enabled >/dev/null || \
+	uci set passwall-speedtest.global.web_enabled='0'
+uci -q get passwall-speedtest.global.web_port >/dev/null || \
+	uci set passwall-speedtest.global.web_port='17544'
+uci -q get passwall-speedtest.global.web_bind >/dev/null || \
+	uci set passwall-speedtest.global.web_bind='0.0.0.0'
+uci -q get passwall-speedtest.global.web_user >/dev/null || \
+	uci set passwall-speedtest.global.web_user='admin'
+uci -q get passwall-speedtest.global.web_timeout >/dev/null || \
+	uci set passwall-speedtest.global.web_timeout='3600'
+uci -q get passwall-speedtest.global.web_password >/dev/null || \
+	uci set passwall-speedtest.global.web_password=''
+
+uci commit passwall-speedtest
+exit 0

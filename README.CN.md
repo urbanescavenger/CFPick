@@ -31,12 +31,46 @@
 
 ## 界面页面
 
-插件在 LuCI → 服务 → PassWall Speed Test 下提供四个页面：
+插件在 LuCI → 服务 → PassWall Speed Test 下提供四个页面，另有一套可选的独立 Web 操作台：
 
 *   **管理页（Management）**：运行状态、开始/停止/复测、各节点最优 IP、最近历史、只读定时任务列表和实时日志；基于下文的管理 API。
-*   **主设置页（Plugin Settings）**：包含「基本 / 计划」两个 Tab，提供 Start/Stop 测速按钮、3 秒轮询的状态条、Best IP 只读区，以及延迟历史折线图。
+*   **主设置页（Plugin Settings）**：包含「基本 / 计划 / Web 操作台」三个 Tab，提供 Start/Stop 测速按钮、3 秒轮询的状态条、Best IP 只读区，以及延迟历史折线图。
 *   **第三方集成页（Third Party Settings）**：按本机已安装的代理软件按需显示对应 Tab；此处选中的 passwall 节点同时作为多线程 worker。
 *   **日志页（Logs）**：增量拉取测速日志，可勾选每 5 秒自动刷新。
+
+## 独立 Web 操作台
+
+除了 LuCI 页面，插件还可以在独立端口启动一套 Web 操作台（`cfst-web`），像 Lucky 一样有自己的登录和操作界面；LuCI 继续负责完整配置。
+
+### 启用
+
+1. LuCI → 服务 → PassWall Speed Test → **插件设置 → Web 操作台**；
+2. 勾选「启用独立操作台」，设置端口（默认 **17544**，避开 Lucky 常用的 17543）、监听地址和用户名；
+3. 保存并应用，服务会自动启动；
+4. 浏览器打开 `http://<路由器IP>:17544/`，首次会要求创建管理员密码（至少 6 位）。
+
+密码只以加盐 SHA-256 哈希保存在 UCI（`passwall-speedtest.global.web_password`），不保存明文；会话 Cookie 为 `HttpOnly` + `SameSite=Strict`，写操作还要求自定义请求头，防止 CSRF。
+
+### 操作台能做什么
+
+*   **操作台页签**：运行状态、开始/停止/复测、各节点最优 IP、最近历史、定时任务、实时日志；
+*   **配置页签**：IP 来源、延迟/丢包阈值、探测参数、下载实测、限时迭代、定时任务（五段 cron）、IP 列表、测试/稳定节点；
+*   worker 节点指派、第三方集成等高级项仍在 LuCI 中配置，操作台配置页有直达链接。
+
+操作台内部调用同一套 `api_*` 管理 API，因此和 LuCI 页面看到的数据完全一致。
+
+### 账号与安全
+
+*   修改密码：操作台「配置 → 操作台账号」，修改后需要重新登录。
+*   忘记密码：SSH 执行
+    ```sh
+    uci delete passwall-speedtest.global.web_password
+    uci commit passwall-speedtest
+    /etc/init.d/cfst-web restart
+    ```
+    然后重新打开操作台创建密码。
+*   操作台默认只建议在局域网使用（明文 HTTP）；远程访问请走 VPN 或带 TLS 的反向代理，不要把 17544 直接暴露到公网。
+*   服务脚本：`/etc/init.d/cfst-web`；端口、监听地址、用户名由 UCI 的 `web_port` / `web_bind` / `web_user` 控制，保存配置会触发服务重载。
 
 ## 管理 API
 

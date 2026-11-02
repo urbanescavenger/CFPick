@@ -22,7 +22,8 @@ mkdir -p "$pkgdir"
 [ -d root ] && cp -R root/* "$pkgdir/"
 # 包内全是文本文件: sh/uc/js/json/txt 及无扩展名的 init.d/uci-defaults/config
 find "$pkgdir" -type f -exec sed -i 's/\r$//' {} +
-chmod +x "$pkgdir"/etc/init.d/* "$pkgdir"/usr/bin/$pkgname/*.sh 2>/dev/null || true
+chmod +x "$pkgdir"/etc/init.d/* "$pkgdir"/etc/uci-defaults/* \
+	"$pkgdir"/www/cfst/cgi-bin/* "$pkgdir"/usr/bin/$pkgname/*.sh 2>/dev/null || true
 
 # 2) po→lmo(LF 归一之后生成;lmo 是二进制,勿再 sed)
 if [ -d po ]; then

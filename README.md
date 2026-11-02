@@ -31,12 +31,46 @@
 
 ## UI Pages
 
-Four pages under LuCI → Services → PassWall Speed Test:
+Four LuCI pages under LuCI → Services → PassWall Speed Test, plus an optional standalone web console:
 
 *   **Management**: run state, start/stop/retest, per-node best IPs, recent history, a read-only scheduled-task list and the live log; backed by the management API below.
-*   **Plugin Settings**: Basic (test params) + Crontab tabs, with a Start/Stop button, a 3-second polled status bar, a read-only Best IP area, and a latency history chart.
+*   **Plugin Settings**: Basic (test params) + Crontab + Web Console tabs, with a Start/Stop button, a 3-second polled status bar, a read-only Best IP area, and a latency history chart.
 *   **Third Party Settings**: Tabs appear on demand for each proxy tool installed on the router. The passwall nodes selected here double as the parallel workers.
 *   **Logs**: Incrementally fetches the test log, with an optional 5-second auto-refresh.
+
+## Standalone Web Console
+
+Besides the LuCI pages, the plugin can run its own web console (`cfst-web`) on a separate port, with its own login and operations UI (similar to Lucky). LuCI remains the full configuration page.
+
+### Enable
+
+1. LuCI → Services → PassWall Speed Test → **Plugin Settings → Web Console**;
+2. Tick "Enable standalone console", set the port (default **17544**, avoiding Lucky's usual 17543), listen address and username;
+3. Save & Apply; the service starts automatically;
+4. Open `http://<router-ip>:17544/`; the first visit asks you to create the admin password (at least 6 characters).
+
+Only a salted SHA-256 hash is stored in UCI (`passwall-speedtest.global.web_password`); the plaintext password is never stored. The session cookie is `HttpOnly` + `SameSite=Strict`, and write actions also require a custom request header to prevent CSRF.
+
+### What the console does
+
+*   **Operations tab**: run state, start/stop/retest, per-node best IPs, recent history, scheduled tasks and the live log.
+*   **Configuration tab**: IP source, latency/loss thresholds, probe settings, download test, time-boxed iteration, five-field cron schedule, IP lists, and the test/stable node selectors.
+*   Worker assignments and third-party integrations remain in LuCI; the console links to the relevant LuCI page.
+
+The console calls the same `api_*` management API, so it always shows the same data as the LuCI pages.
+
+### Account and security
+
+*   Change the password in **Configuration → Console account**; you will be asked to log in again.
+*   Forgot the password: run over SSH:
+    ```sh
+    uci delete passwall-speedtest.global.web_password
+    uci commit passwall-speedtest
+    /etc/init.d/cfst-web restart
+    ```
+    then open the console again to create a new password.
+*   The console is intended for LAN use over plain HTTP. For remote access use a VPN or a TLS reverse proxy; do not expose port 17544 directly to the internet.
+*   Service script: `/etc/init.d/cfst-web`; the port, listen address and username come from the UCI options `web_port`, `web_bind` and `web_user`. Saving the settings reloads the service.
 
 ## Management API
 
