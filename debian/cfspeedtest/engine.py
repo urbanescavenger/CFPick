@@ -23,7 +23,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import config, core, iplists, links, lock, paths, result
+from . import config, core, ddns, iplists, links, lock, paths, result
 from .log import Logger
 
 SOCKS_PORT_BASE = 48900
@@ -115,6 +115,7 @@ class Engine:
                 "slot": len(nodes) + 1,
                 "name": name,
                 "ip_list": (item.get("ip_list") or "").strip(),
+                "ddns_domain": (item.get("ddns_domain") or "").strip().lower().rstrip("."),
                 "parsed": parsed,
             })
         if not nodes:
@@ -596,15 +597,33 @@ class Engine:
         result.write_result(paths.RESULT_FILE, merged, when)
         if self.cfg.get("export", {}).get("json", True):
             result.export_json(merged, when)
-        lock.write_state(
-            phase="done",
-            finished_at=int(time.time()),
-            best_ip=merged[0].ip,
-            best_latency=round(merged[0].latency, 2),
-            best_speed=round(merged[0].speed, 2),
-            last_time=when,
-            error="",
-        )
+
+        # DDNS is opt-in and isolated: a DNS failure must never turn a
+        # successful speed test into a failed run.
+        ddns_report = None
+        if (self.cfg.get("ddns") or {}).get("enabled"):
+            try:
+                ddns_report = ddns.apply(
+                    self.cfg, nodes, merged, log=self.log.log, when=when)
+            except Exception as exc:
+                ddns_report = {
+                    "enabled": True, "provider": "cloudflare", "at": when,
+                    "ok": False, "nodes": [], "error": str(exc),
+                }
+                self.log.log("DDNS 写入异常: %s" % exc)
+
+        state_fields = {
+            "phase": "done",
+            "finished_at": int(time.time()),
+            "best_ip": merged[0].ip,
+            "best_latency": round(merged[0].latency, 2),
+            "best_speed": round(merged[0].speed, 2),
+            "last_time": when,
+            "error": "",
+        }
+        if ddns_report is not None:
+            state_fields["ddns"] = ddns_report
+        lock.write_state(**state_fields)
         suffix = " %.2f MB/s" % merged[0].speed if merged[0].speed > 0 else ""
         self.log.log("全部完成，全局最优 IP %s（延迟 %.2fms%s），结果已导出到 %s" % (
             merged[0].ip, merged[0].latency, suffix, paths.STATE_DIR))

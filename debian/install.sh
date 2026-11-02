@@ -72,6 +72,7 @@ cat <<'EOF'
   cfst status
   cfst run start
   cfst run retest
+  cfst ddns show
   cfst update-core
   systemctl status cf-speedtest-web
   journalctl -u cf-speedtest-web -f

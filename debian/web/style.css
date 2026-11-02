@@ -184,6 +184,7 @@ table.data .empty, .empty-note { color: var(--muted); text-align: center; paddin
 .nodes-table td { vertical-align: middle; }
 .nodes-table tr.disabled { opacity: 0.55; }
 .nodes-table input[type="text"] { min-width: 240px; }
+.nodes-table input.ddns-input { min-width: 220px; font-family: var(--mono); font-size: 0.78rem; }
 .nodes-table input.link-input { min-width: 420px; font-family: var(--mono); font-size: 0.76rem; }
 .nodes-table .row-actions { display: flex; gap: 6px; }
 .badge {
@@ -196,6 +197,7 @@ table.data .empty, .empty-note { color: var(--muted); text-align: center; paddin
 
 /* ── forms ───────────────────────────────────────────────────────── */
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 16px; }
+#ddns-status { white-space: pre-line; font-family: var(--mono); font-size: 0.78rem; }
 .grid.three { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
 label { display: flex; flex-direction: column; gap: 5px; font-size: 0.8rem; color: var(--muted); font-weight: 550; }
 label.span2 { grid-column: span 2; }

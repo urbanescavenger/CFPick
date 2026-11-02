@@ -4,7 +4,8 @@ import argparse
 import json
 import sys
 
-from . import __version__, config, core, cron, engine, links, lock, paths, result
+from . import __version__, config, core, cron, ddns, engine, links, lock, paths, result
+from .log import Logger
 
 
 def _print_json(payload):
@@ -104,6 +105,29 @@ def cmd_cron(args):
     return 0
 
 
+def cmd_ddns(args):
+    cfg = config.load()
+    nodes = cfg.get("nodes", [])
+    rows, when = result.read_result()
+    if not rows:
+        print("没有可用的测速结果，请先运行测速")
+        return 1
+    if args.action == "show":
+        _print_json(ddns.preview(cfg, nodes, rows, when))
+        return 0
+    if lock.is_running():
+        print("测速正在运行，请等结束后再写入 DNS")
+        return 1
+    if not (cfg.get("ddns") or {}).get("enabled"):
+        print("DDNS 未启用，请先在配置中打开 ddns.enabled")
+        return 1
+    logger = Logger(paths.DDNS_LOG)
+    report = ddns.apply(cfg, nodes, rows, log=logger.log, when=when)
+    lock.write_state(ddns=report)
+    _print_json(report)
+    return 0 if report.get("ok") else 1
+
+
 def cmd_serve(args):
     from . import web
 
@@ -161,6 +185,11 @@ def build_parser():
     cron_parser.add_argument("action", nargs="?", default="apply",
                              choices=["apply", "remove", "list"])
     cron_parser.set_defaults(func=cmd_cron)
+
+    ddns_parser = sub.add_parser("ddns", help="preview or write best IPs to Cloudflare DNS")
+    ddns_parser.add_argument("action", nargs="?", default="show",
+                             choices=["show", "apply"])
+    ddns_parser.set_defaults(func=cmd_ddns)
 
     serve_parser = sub.add_parser("serve", help="start the web UI")
     serve_parser.add_argument("--listen", default="")

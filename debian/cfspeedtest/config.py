@@ -55,6 +55,18 @@ DEFAULT_CONFIG = {
         "paths": {"mihomo": "", "xray": ""},
         "dns_nameserver": "",
     },
+    "ddns": {
+        "enabled": False,
+        "provider": "cloudflare",
+        "ip_count": 1,
+        "ttl": 300,
+        "cloudflare": {
+            "api_token": "",
+            "zone_id": "",
+            "zone_name": "",
+            "proxied": False,
+        },
+    },
     "schedule": {
         "enabled": False,
         "custom_enabled": False,
@@ -117,6 +129,17 @@ def _clean_text(value, default=""):
     return str(value).strip()
 
 
+def _clean_domain(value):
+    """Hostnames are stored lower-case and without the trailing root dot."""
+    return _clean_text(value).lower().rstrip(".")
+
+
+def _ttl(value):
+    ttl = _as_int(value, 300, 1, 86400)
+    # Cloudflare accepts 1 ("auto") or 60-86400; clamp the meaningless gap.
+    return 60 if ttl != 1 and ttl < 60 else ttl
+
+
 def _clean_name(value, fallback):
     name = _clean_text(value)
     name = re.sub(r"[\r\n,]+", " ", name)
@@ -167,6 +190,7 @@ def _normalize_nodes(value):
             "name": _clean_name(item.get("name"), "node%d" % (index + 1)),
             "link": link,
             "ip_list": _clean_text(item.get("ip_list")),
+            "ddns_domain": _clean_domain(item.get("ddns_domain")),
             "enabled": _as_bool(item.get("enabled"), True),
         })
     # make names unique; duplicate names would merge two workers' results
@@ -191,7 +215,7 @@ def normalize(data):
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     if isinstance(data, dict):
         for key, value in data.items():
-            if key not in ("ip_lists", "nodes", "core", "schedule", "web", "export"):
+            if key not in ("ip_lists", "nodes", "core", "schedule", "web", "export", "ddns"):
                 cfg[key] = value
 
     cfg["ip_source"] = _clean_text(cfg.get("ip_source"), "builtin_ipv4")
@@ -236,6 +260,22 @@ def normalize(data):
             or (legacy_path if core_type == "xray" else ""),
         },
         "dns_nameserver": _clean_text(core.get("dns_nameserver")),
+    }
+
+    ddns = data.get("ddns") if isinstance(data, dict) and isinstance(data.get("ddns"), dict) else {}
+    cloudflare = ddns.get("cloudflare") if isinstance(ddns.get("cloudflare"), dict) else {}
+    cfg["ddns"] = {
+        "enabled": _as_bool(ddns.get("enabled"), False),
+        # Only Cloudflare is implemented; keep the field so the schema can grow.
+        "provider": "cloudflare",
+        "ip_count": _as_int(ddns.get("ip_count"), 1, 1, 10),
+        "ttl": _ttl(ddns.get("ttl", 300)),
+        "cloudflare": {
+            "api_token": _clean_text(cloudflare.get("api_token")),
+            "zone_id": _clean_text(cloudflare.get("zone_id")),
+            "zone_name": _clean_domain(cloudflare.get("zone_name")),
+            "proxied": _as_bool(cloudflare.get("proxied"), False),
+        },
     }
 
     schedule = data.get("schedule") if isinstance(data, dict) and isinstance(data.get("schedule"), dict) else {}

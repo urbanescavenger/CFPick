@@ -7,8 +7,9 @@
 Python3 标准库实现的 Web 可视化页面。
 
 > 与 OpenWrt 版的定位差异：OpenWrt 版会把最优 IP 写回 PassWall / hosts / MosDNS 等运行配置；
-> Debian 版按需求**只导出结果**（`result.csv`、`result.json`、`best.json`），不修改系统
-> hosts、DNS 或代理客户端配置，避免误改生产环境。
+> Debian 版**默认只导出结果**（`result.csv`、`result.json`、`best.json`），不修改系统
+> hosts、DNS 或代理客户端配置，避免误改生产环境。唯一的可选写回是 **Cloudflare DDNS**：
+> 只有显式启用、并且节点单独填写了 DDNS 域名时才会写 DNS，默认关闭。
 
 ## 功能
 
@@ -40,6 +41,8 @@ Python3 标准库实现的 Web 可视化页面。
 * **结果导出**：`result.csv`、`result.json`、`best.json`；自动滚动保留 10 份 CSV，
   持久历史 `history.csv`（5000 行上限）。
 * **定时任务**：保存配置时幂等写入 root crontab，只维护带 `cf-speedtest` 标记的块。
+* **可选 Cloudflare DDNS**：每个节点可单独填写一个域名，测速结束后把该节点的最优 IP
+  写入域名的 A/AAAA 记录；未填写域名的节点只测速，不碰 DNS。默认关闭，详见下文。
 * **单实例锁**：定时重叠、页面连点、SSH 手敲同时触发时只跑一个；残留锁自动接管。
 * **停止语义**：停止后各 worker 跑完当前 IP 即停，但仍会完成已通过 IP 的下载实测并导出结果。
 
@@ -209,9 +212,9 @@ sudo cfst update-core --type all      # 两个都装
 | 页签 | 内容 |
 | --- | --- |
 | 概览 | 运行状态、全局最优、内核版本、定时任务、按节点分组的最优 IP、历史趋势图、完整结果表、CSV/JSON 下载 |
-| 节点 | 分享链接、名称、启用开关、每节点的 CM 列表指派、解析状态 |
+| 节点 | 分享链接、名称、启用开关、每节点的 CM 列表指派、每节点的 DDNS 域名、解析状态 |
 | IP 列表 | 五个在线 CM 列表的启用/名称/国家码/端口 |
-| 设置 | 候选来源、延迟与丢包阈值、探测参数、下载实测、限时迭代、定时任务、已设置任务（只读 cron 全览）、内核路径/DNS、Web 监听与访问令牌 |
+| 设置 | 候选来源、延迟与丢包阈值、探测参数、下载实测、限时迭代、定时任务、DDNS、已设置任务（只读 cron 全览）、内核路径/DNS、Web 监听与访问令牌 |
 | 日志 | 增量拉取运行日志，2 秒自动刷新，自动滚动，下载日志 |
 | 内核 | 选择当前内核（mihomo / Xray），分别查看版本/路径/来源，按卡片安装或升级（可填版本标签），设置每个内核的自定义二进制路径；底部「程序更新」可在线拉取代码并重启 Web |
 
@@ -241,6 +244,8 @@ cfst update-core --type xray          # 单独升级 Xray
 cfst update-core --type all           # 两个都升级
 cfst update-core --type mihomo --tag v1.19.33   # 指定版本
 cfst cron apply|remove|list  # 写入/移除 crontab，或只读列出全部任务
+cfst ddns show          # 预览每个节点会写入哪个域名、哪些 IP（不联网）
+cfst ddns apply         # 立即按当前 result.csv 写入 Cloudflare DNS
 cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 ```
 
@@ -272,7 +277,15 @@ cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 | `download_time` | `10` | 单 IP 下载时限（秒），截断部分仍按已下载字节算平均速度 |
 | `iterate_enabled` | `false` | 限时迭代 |
 | `iterate_minutes` | `30` | 迭代时长（分钟） |
-| `nodes` | `[]` | `{name, link, ip_list, enabled}` 数组 |
+| `nodes` | `[]` | `{name, link, ip_list, ddns_domain, enabled}` 数组；`ddns_domain` 可填完整主机名或裸子域名（配合 `zone_name`），留空表示该节点只测速 |
+| `ddns.enabled` | `false` | 是否启用 Cloudflare DDNS 写回 |
+| `ddns.provider` | `cloudflare` | 目前仅支持 Cloudflare |
+| `ddns.ip_count` | `1` | 每个节点写入几个最优 IP（1–10） |
+| `ddns.ttl` | `300` | DNS TTL（秒）；`1` = Cloudflare 自动 |
+| `ddns.cloudflare.api_token` | 空 | Cloudflare API Token，需要目标 Zone 的 `DNS:Edit` 权限 |
+| `ddns.cloudflare.zone_id` | 空 | Zone ID；留空时用 Zone 名称或按节点域名自动查找 |
+| `ddns.cloudflare.zone_name` | 空 | Zone 名称（如 `example.com`）；填写后所有节点域名必须在该 Zone 内 |
+| `ddns.cloudflare.proxied` | `false` | 是否橙云代理；优选 IP 场景必须为 `false`，否则写入的 IP 不生效 |
 | `core.type` | `mihomo` | 当前使用的内核模块：`mihomo` / `xray`（节点兼容性见上表） |
 | `core.paths.mihomo` | 空 | 自定义 mihomo 二进制路径；空 = 使用托管内核 |
 | `core.paths.xray` | 空 | 自定义 Xray 二进制路径；空 = 使用托管内核 |
@@ -298,6 +311,7 @@ cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 | `/var/log/cf-speedtest/mihomo.log` / `xray.log` | 内核输出（排查节点握手/证书问题） |
 | `/var/log/cf-speedtest/core-update.log` | 内核下载/升级日志 |
 | `/var/log/cf-speedtest/update-app.log` | Web「程序更新」的 git/install 输出 |
+| `/var/log/cf-speedtest/ddns.log` | 手动执行 `cfst ddns apply` 或 Web「立即写入」的 DDNS 日志 |
 | `/var/log/cf-speedtest/spawn.log` | Web 启动测速子进程时的早期输出 |
 
 下载接口：`/api/export/result.csv`、`/api/export/result.json`、`/api/export/log`
@@ -322,13 +336,52 @@ crontab、`/etc/crontab`、`/etc/cron.d/*`，以及 `/etc/cron.{hourly,daily,wee
 其它任务只有在你手动编辑 crontab 时才会变化。命令行等价物：`cfst cron list`，
 Web API 为 `GET /api/cron`。
 
+## DDNS（Cloudflare 优选 IP）
+
+这是 Debian 版唯一会主动写外部配置的功能，默认关闭。语义与 OpenWrt 版的阿里云 DDNS 相同：
+把测速得到的**优选 IP** 写进域名的 A/AAAA 记录，让节点域名解析到最快的 Cloudflare 边缘 IP。
+它不是"上报本机公网 IP"的常规 DDNS。
+
+### 配置步骤
+
+1. 在 Cloudflare 创建 API Token：权限只需目标 Zone 的 **DNS:Edit**（读取 Zone 需要
+   Zone:Read）。把 Token 填到「设置 → DDNS」。
+2. 填写 Zone ID 或 Zone 名称（二选一，都留空时按节点域名自动向上查找 Zone）。
+3. 在「节点」页给每个需要写 DNS 的节点填写 **DDNS 域名**（完整主机名如
+   `jp.example.com`，或只填子域名 `jp`，此时会自动拼上 Zone 名称）。留空的节点只测速，
+   永远不写 DNS。
+4. 勾选「启用 DDNS 写入」并保存。下次测速（含定时任务、复测）结束后会自动写入。
+5. 想立即验证：点「预览」看计划，点「立即写入」用当前 `result.csv` 写一次。
+
+### 行为说明
+
+* 每个节点只写**自己**的最优 IP（按节点分组），互不影响；未配置域名的节点跳过。
+* IPv4 写 `A`，IPv6 写 `AAAA`；同一节点混合地址族时分别写入。
+* 先查询现有记录，内容/ TTL / 代理状态都一致时不发写请求，避免每次定时测速都改 DNS。
+* 记录数量不足时新建，数量足够时原地更新，尽量保持 RecordId 稳定；多余的旧记录不会自动删除，
+  只在日志里提示。
+* 单节点写入失败只记日志并出现在 Web 状态里，**不会**让这次测速变成失败，也不会影响其它节点。
+* 请求直连 Cloudflare API，不继承 `http_proxy` / `https_proxy`。
+* Web 接口返回的 Token 始终是 `***`；保存时把输入框留成 `***` 表示保留原 Token，
+  清空输入框才会删除。
+
+### 注意
+
+* **橙云（proxied）必须关闭**。开启后 Cloudflare 会返回自己的 anycast IP，写入的优选 IP
+  不会出现在解析结果里。代码在更新橙云记录时会自动改为 DNS only，并在日志中提示。
+* 配置了全局 `zone_name` 时，所有节点的域名都必须在那个 Zone 内；多 Zone 请留空让它自动查找。
+* DNS 有缓存，修改后不会立刻在所有客户端生效，TTL 建议 300–600。
+* 节点链接的域名本身要能通过 Cloudflare 边缘正常握手（TLS SNI / WS Host 等），否则即使解析到
+  最优 IP 也连不上。
+
 ## 与 OpenWrt 版的对应关系
+
 
 | OpenWrt 版 | Debian 版 |
 | --- | --- |
 | PassWall 节点 `address` 改写 + `app.sh run_socks` | 生成临时 mihomo YAML / Xray JSON 配置，替换服务器地址，拉起私有 SOCKS 端口 |
 | 稳定节点 / 全局节点切换 | 不需要：内核进程与系统代理隔离，不影响实流量 |
-| 写回 PassWall / hosts / MosDNS / 阿里云 DDNS | 只导出 CSV/JSON（按需求） |
+| 写回 PassWall / hosts / MosDNS / 阿里云 DDNS | 默认只导出 CSV/JSON；可选 Cloudflare DDNS（每节点独立域名） |
 | LuCI 页面 + rpcd/ucode | Python3 标准库 HTTP 服务 + 原生 JS |
 | procd + uci 配置 | systemd + JSON 配置 |
 | `/tmp` 结果 + `/etc/config/...log` | `/var/lib/cf-speedtest` + `/var/log/cf-speedtest` |
@@ -352,6 +405,10 @@ Web API 为 `GET /api/cron`。
 * **下载实测全部失败**：确认 `download_url` 经该节点可达；失败时保留延迟排序结果，不会丢数据。
 * **想临时改路径/端口**：所有路径支持环境变量：
   `CFST_APP_DIR`、`CFST_CONFIG`、`CFST_CONFIG_DIR`、`CFST_STATE_DIR`、`CFST_LOG_DIR`。
+* **DDNS 没生效**：先用 `cfst ddns show` 确认节点是否填了域名、IP 是否选对；再用
+  `cfst ddns apply` 看 Cloudflare 的错误信息。常见原因：Token 缺少 `DNS:Edit`、Zone 填错、
+  记录是橙云（会导致写入的 IP 不生效）、节点本次没有测出结果。日志见
+  `/var/log/cf-speedtest/ddns.log` 和测速日志里的 `DDNS [...]` 行。
 * **看服务日志**：`journalctl -u cf-speedtest-web -f`。
 
 ## 开发与测试

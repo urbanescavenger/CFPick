@@ -26,6 +26,7 @@ class WebTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         base = Path(cls.tmp.name)
+        cls.base = base
         cls.port = free_port()
         cls.base_url = "http://127.0.0.1:%d" % cls.port
         env = os.environ.copy()
@@ -172,6 +173,42 @@ class WebTests(unittest.TestCase):
         status, data = self.request("/api/stop", method="POST", payload={})
         self.assertEqual(status, 200)
         self.assertTrue(data["stopped"])
+
+    def test_ddns_preview_endpoint(self):
+        status, data = self.request("/api/ddns")
+        self.assertEqual(status, 200)
+        self.assertIn("preview", data)
+        self.assertIn("last", data)
+        self.assertEqual(data["preview"]["provider"], "cloudflare")
+
+    def test_ddns_apply_requires_enabled_config(self):
+        status, data = self.request("/api/ddns/apply", method="POST", payload={})
+        self.assertEqual(status, 400)
+        self.assertIn("未启用", data["error"])
+
+    def test_ddns_token_is_masked_and_preserved(self):
+        status, data = self.request("/api/config")
+        self.assertEqual(status, 200)
+        original = data["config"]
+        original["ddns"]["cloudflare"]["api_token"] = "secret-token"
+        status, data = self.request("/api/config", method="POST",
+                                    payload={"config": original})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["config"]["ddns"]["cloudflare"]["api_token"], "***")
+
+        status, data = self.request("/api/config")
+        self.assertEqual(data["config"]["ddns"]["cloudflare"]["api_token"], "***")
+
+        # Saving the masked placeholder must keep the stored token.
+        status, data = self.request("/api/config", method="POST",
+                                    payload={"config": data["config"]})
+        self.assertEqual(status, 200)
+        stored = json.loads((self.base / "etc" / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["ddns"]["cloudflare"]["api_token"], "secret-token")
+
+        masked = data["config"]
+        masked["ddns"]["cloudflare"]["api_token"] = ""
+        self.request("/api/config", method="POST", payload={"config": masked})
 
     def test_token_auth(self):
         status, data = self.request("/api/config")

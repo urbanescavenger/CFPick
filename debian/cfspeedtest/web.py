@@ -6,6 +6,7 @@ tests and read node links, so keep the default loopback bind unless the port
 is protected by a reverse proxy.
 """
 
+import copy
 import json
 import mimetypes
 import os
@@ -20,13 +21,14 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, config, core, cron, links, lock, paths, result
+from . import __version__, config, core, cron, ddns, links, lock, paths, result
 from .log import Logger, read_chunk
 
 MAX_BODY = 2 * 1024 * 1024
 _cron_cache = {"ts": 0.0, "info": {"installed": False, "line": ""}}
 _core_update = {"updating": False, "type": "", "message": "", "error": "", "finished_at": 0}
 _core_update_lock = threading.Lock()
+_ddns_lock = threading.Lock()
 
 
 def _json_bytes(payload):
@@ -39,6 +41,41 @@ def _cron_status(force=False):
         _cron_cache["ts"] = now
         _cron_cache["info"] = cron.current()
     return _cron_cache["info"]
+
+
+def _masked_config(cfg):
+    """Never send the stored Cloudflare token to the browser."""
+    cfg = copy.deepcopy(cfg)
+    ddns_cfg = cfg.get("ddns") or {}
+    cloudflare = ddns_cfg.get("cloudflare") or {}
+    if cloudflare.get("api_token"):
+        cloudflare["api_token"] = ddns.TOKEN_MASK
+    return cfg
+
+
+def _ddns_summary(cfg, last):
+    ddns_cfg = cfg.get("ddns") or {}
+    last = last if isinstance(last, dict) else {}
+    nodes = last.get("nodes") or []
+    updated = sum(int(item.get("created", 0)) + int(item.get("updated", 0))
+                  for item in nodes if isinstance(item, dict))
+    unchanged = sum(int(item.get("unchanged", 0))
+                    for item in nodes if isinstance(item, dict))
+    errors = [item.get("error", "") for item in nodes
+              if isinstance(item, dict) and item.get("error")]
+    return {
+        "enabled": bool(ddns_cfg.get("enabled")),
+        "provider": ddns_cfg.get("provider", "cloudflare"),
+        "configured": len([node for node in cfg.get("nodes", [])
+                           if node.get("enabled", True)
+                           and (node.get("ddns_domain") or "").strip()]),
+        "at": last.get("at", ""),
+        "ok": last.get("ok"),
+        "updated": updated,
+        "unchanged": unchanged,
+        "failed": len(errors),
+        "error": errors[0] if errors else last.get("error", ""),
+    }
 
 
 def _git_output(source, *args):
@@ -161,6 +198,17 @@ def _config_warnings(cfg):
             warnings.append("%s 的自定义内核路径不存在: %s" % (name, path))
     if not core.core_info(cfg, core_type).get("installed"):
         warnings.append("当前内核 %s 尚未安装，请到「内核」页安装" % core_type)
+    ddns_cfg = cfg.get("ddns") or {}
+    if ddns_cfg.get("enabled"):
+        cloudflare = ddns_cfg.get("cloudflare") or {}
+        if not (cloudflare.get("api_token") or "").strip():
+            warnings.append("已启用 DDNS，但未填写 Cloudflare API Token")
+        if not any(node.get("enabled", True)
+                   and (node.get("ddns_domain") or "").strip()
+                   for node in cfg.get("nodes", [])):
+            warnings.append("已启用 DDNS，但没有节点填写 DDNS 域名（这些节点只测速）")
+        if cloudflare.get("proxied"):
+            warnings.append("DDNS 使用 Cloudflare 代理（橙云）时，写入的优选 IP 不会生效，建议关闭代理")
     return warnings
 
 
@@ -310,7 +358,7 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/status":
             self._send_json(self._status())
         elif route == "/api/config":
-            self._send_json({"config": config.load()})
+            self._send_json({"config": _masked_config(config.load())})
         elif route == "/api/nodes":
             cfg = config.load()
             self._send_json({
@@ -338,6 +386,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(read_chunk(paths.RUN_LOG, pos, first_tail=tail))
         elif route == "/api/cron":
             self._send_json(cron.list_tasks())
+        elif route == "/api/ddns":
+            cfg = config.load()
+            rows, when = result.read_result()
+            self._send_json({
+                "preview": ddns.preview(cfg, cfg.get("nodes", []), rows, when),
+                "last": lock.read_state().get("ddns") or {},
+            })
         elif route == "/api/core":
             self._send_json(self._core_payload())
         elif route == "/api/app":
@@ -393,6 +448,7 @@ class Handler(BaseHTTPRequestHandler):
             },
             "version": __version__,
             "state_dir": str(paths.STATE_DIR),
+            "ddns": _ddns_summary(cfg, state.get("ddns")),
             "time": now,
         }
 
@@ -440,6 +496,8 @@ class Handler(BaseHTTPRequestHandler):
             self._save_config(body)
         elif route == "/api/core/update":
             self._update_core(body)
+        elif route == "/api/ddns/apply":
+            self._apply_ddns()
         elif route == "/api/update-app":
             self._update_app()
         else:
@@ -525,7 +583,16 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(cfg, dict):
             self._send_error(400, "config must be an object")
             return
-        normalized = config.normalize(cfg)
+        # The browser only ever sees a masked token; "***" means "keep the
+        # stored one".  An empty string still clears it explicitly.
+        previous = config.load(create=False)
+        incoming = copy.deepcopy(cfg)
+        cloudflare = ((incoming.get("ddns") or {}).get("cloudflare")
+                      if isinstance(incoming.get("ddns"), dict) else None)
+        if isinstance(cloudflare, dict) and cloudflare.get("api_token") == ddns.TOKEN_MASK:
+            cloudflare["api_token"] = (
+                ((previous.get("ddns") or {}).get("cloudflare") or {}).get("api_token", ""))
+        normalized = config.normalize(incoming)
         warnings = _config_warnings(normalized)
         saved = config.save(normalized)
         cron_error = ""
@@ -535,10 +602,46 @@ class Handler(BaseHTTPRequestHandler):
             cron_error = str(exc)
         _cron_cache["ts"] = 0
         self._send_json({
-            "config": saved,
+            "config": _masked_config(saved),
             "warnings": warnings,
             "cron_error": cron_error,
             "message": "配置已保存" + ("；定时任务: %s" % cron_error if cron_error else ""),
+        })
+
+    def _apply_ddns(self):
+        if lock.is_running():
+            self._send_error(409, "测速正在运行，请等结束后再写入 DNS")
+            return
+        cfg = config.load()
+        if not (cfg.get("ddns") or {}).get("enabled"):
+            self._send_error(400, "DDNS 未启用")
+            return
+        rows, when = result.read_result()
+        if not rows:
+            self._send_error(400, "还没有测速结果，请先运行测速")
+            return
+        if not _ddns_lock.acquire(blocking=False):
+            self._send_error(409, "已有 DDNS 写入在进行，请稍候")
+            return
+        try:
+            logger = Logger(paths.DDNS_LOG, echo=False)
+            try:
+                report = ddns.apply(cfg, cfg.get("nodes", []), rows,
+                                    log=logger.log, when=when)
+            except Exception as exc:
+                report = {
+                    "enabled": True, "provider": "cloudflare", "at": when,
+                    "ok": False, "nodes": [], "error": str(exc),
+                }
+                logger.log("DDNS 写入异常: %s" % exc)
+            lock.write_state(ddns=report)
+        finally:
+            _ddns_lock.release()
+        self._send_json({
+            "report": report,
+            "last": report,
+            "message": "DDNS 写入完成" if report.get("ok") else (
+                report.get("error") or "DDNS 写入失败"),
         })
 
     def _update_core(self, body):

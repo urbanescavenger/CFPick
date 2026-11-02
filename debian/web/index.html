@@ -59,6 +59,11 @@
         <strong id="ov-cron">—</strong>
         <span id="ov-cron-line" class="sub mono">—</span>
       </div>
+      <div class="card stat">
+        <span class="label">DDNS</span>
+        <strong id="ov-ddns">—</strong>
+        <span id="ov-ddns-meta" class="sub">—</span>
+      </div>
     </div>
 
     <div class="card">
@@ -114,11 +119,13 @@
         每行一个节点，支持 <code>vless://</code>、<code>vmess://</code>、<code>trojan://</code>、
         <code>ss://</code>、<code>hysteria2://</code> 分享链接。测速时会把链接中的服务器地址替换成候选
         Cloudflare IP，端口保持不变；每个节点是一个并行 worker。链接含凭据，配置文件权限为 600。
+        「DDNS 域名」留空的节点只参与测速；填写后，该节点的最优 IP 会写入这个域名的
+        A/AAAA 记录（需在「设置 → DDNS」中配置 Cloudflare Token）。
       </p>
       <div class="table-wrap">
         <table class="data nodes-table">
           <thead>
-            <tr><th>启用</th><th>名称</th><th>分享链接</th><th>IP 列表</th><th>解析</th><th></th></tr>
+            <tr><th>启用</th><th>名称</th><th>分享链接</th><th>IP 列表</th><th>DDNS 域名</th><th>解析</th><th></th></tr>
           </thead>
           <tbody id="nodes-body"></tbody>
         </table>
@@ -254,6 +261,34 @@
           </table>
         </div>
         <p class="muted" id="cron-errors"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>DDNS（Cloudflare 优选 IP）</h2>
+          <div class="card-actions">
+            <button type="button" class="btn small" id="btn-ddns-apply">立即写入</button>
+            <button type="button" class="btn small" id="btn-ddns-preview">预览</button>
+          </div>
+        </div>
+        <div class="grid three">
+          <label class="check"><input id="ddns_enabled" type="checkbox"> 启用 DDNS 写入</label>
+          <label>API Token
+            <input id="ddns_token" type="password" autocomplete="new-password" placeholder="*** = 保留已保存的令牌">
+          </label>
+          <label>Zone ID（可选） <input id="ddns_zone_id" type="text" spellcheck="false" placeholder="留空则自动查找"></label>
+          <label>Zone 名称（可选） <input id="ddns_zone_name" type="text" spellcheck="false" placeholder="example.com"></label>
+          <label>每节点写入 IP 数 <input id="ddns_ip_count" type="number" min="1" max="10" step="1"></label>
+          <label>TTL（秒，1 = 自动） <input id="ddns_ttl" type="number" min="1" max="86400" step="1"></label>
+          <label class="check"><input id="ddns_proxied" type="checkbox"> Cloudflare 橙云代理（不推荐）</label>
+        </div>
+        <p class="muted">
+          每个节点在「节点」页填写自己的 DDNS 域名；留空的节点只测速，不写 DNS。
+          写入的是该节点本次最优的 IP（IPv4 → A，IPv6 → AAAA）。Zone ID / 名称都留空时按域名自动查找。
+          API Token 需要该 Zone 的 <code>DNS:Edit</code> 权限。启用橙云代理后 Cloudflare 会返回自己的
+          边缘 IP，写入的优选 IP 不会生效，优选场景请保持关闭。
+        </p>
+        <p class="muted" id="ddns-status">尚未写入。</p>
       </div>
 
       <div class="card">

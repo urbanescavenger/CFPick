@@ -197,6 +197,32 @@
 		if (status.core) renderActiveCore(status.core);
 		setText('ov-cron', status.cron ? '已启用' : '未启用');
 		setText('ov-cron-line', status.cron_line || '—');
+		renderDdnsStatus(status.ddns);
+	}
+
+	function ddnsText(info) {
+		if (!info || !info.enabled) return '未启用';
+		if (!info.configured) return '已启用，但没有节点填写 DDNS 域名';
+		if (info.error) return info.error;
+		if (!info.at) return '等待下次测速写入';
+		return (info.ok === false ? '上次写入失败 · ' : '') + info.at +
+			' · ' + (info.updated || 0) + ' 条更新 / ' + (info.unchanged || 0) + ' 条无变化' +
+			(info.failed ? ' / ' + info.failed + ' 个节点失败' : '');
+	}
+
+	function renderDdnsStatus(info) {
+		const enabled = !!(info && info.enabled);
+		let head = '—';
+		if (enabled) {
+			if (info.ok === false) head = '写入失败';
+			else if (info.at) head = '已写入';
+			else head = '等待写入';
+		}
+		setText('ov-ddns', head);
+		setText('ov-ddns-meta', ddnsText(info));
+		setText('ddns-status', enabled
+			? ('DDNS：' + ddnsText(info))
+			: 'DDNS 未启用；启用后，只有填写了 DDNS 域名的节点会写 DNS。');
 	}
 
 	function renderActiveCore(info) {
@@ -531,6 +557,17 @@
 			listCell.appendChild(listSelect);
 			tr.appendChild(listCell);
 
+			const ddnsCell = document.createElement('td');
+			const ddnsDomain = document.createElement('input');
+			ddnsDomain.type = 'text';
+			ddnsDomain.className = 'ddns-input';
+			ddnsDomain.value = node.ddns_domain || '';
+			ddnsDomain.placeholder = 'jp 或 jp.example.com；留空 = 只测速';
+			ddnsDomain.spellcheck = false;
+			ddnsDomain.addEventListener('input', () => { node.ddns_domain = ddnsDomain.value; });
+			ddnsCell.appendChild(ddnsDomain);
+			tr.appendChild(ddnsCell);
+
 			const statusCell = document.createElement('td');
 			const info = state.nodeInfo[index];
 			const badge = document.createElement('span');
@@ -597,6 +634,7 @@
 				name: nameFromLink(link),
 				link: link,
 				ip_list: '',
+				ddns_domain: '',
 				enabled: true,
 			});
 			added += 1;
@@ -746,6 +784,15 @@
 		set('download_time', cfg.download_time);
 		check('iterate_enabled', cfg.iterate_enabled);
 		set('iterate_minutes', cfg.iterate_minutes);
+		const ddns = cfg.ddns || {};
+		const cloudflare = ddns.cloudflare || {};
+		check('ddns_enabled', ddns.enabled);
+		set('ddns_token', cloudflare.api_token || '');
+		set('ddns_zone_id', cloudflare.zone_id);
+		set('ddns_zone_name', cloudflare.zone_name);
+		set('ddns_ip_count', ddns.ip_count);
+		set('ddns_ttl', ddns.ttl);
+		check('ddns_proxied', cloudflare.proxied);
 		check('schedule_enabled', cfg.schedule.enabled);
 		check('schedule_custom', cfg.schedule.custom_enabled);
 		set('schedule_hour', cfg.schedule.hour);
@@ -789,6 +836,19 @@
 		cfg.download_time = integer('download_time', 10, 1, 60);
 		cfg.iterate_enabled = check('iterate_enabled');
 		cfg.iterate_minutes = integer('iterate_minutes', 30, 1, 10080);
+		const oldDdns = cfg.ddns || {};
+		cfg.ddns = Object.assign({}, oldDdns, {
+			enabled: check('ddns_enabled'),
+			provider: 'cloudflare',
+			ip_count: integer('ddns_ip_count', 1, 1, 10),
+			ttl: integer('ddns_ttl', 300, 1, 86400),
+			cloudflare: Object.assign({}, oldDdns.cloudflare || {}, {
+				api_token: text('ddns_token'),
+				zone_id: text('ddns_zone_id'),
+				zone_name: text('ddns_zone_name'),
+				proxied: check('ddns_proxied'),
+			}),
+		});
 		cfg.schedule = Object.assign({}, cfg.schedule, {
 			enabled: check('schedule_enabled'),
 			custom_enabled: check('schedule_custom'),
@@ -823,6 +883,51 @@
 			else if (key === 'custom-cron') visible = customCron;
 			node.classList.toggle('hidden', !visible);
 		});
+	}
+
+	async function previewDdns() {
+		try {
+			const data = await api('/api/ddns');
+			const preview = data.preview || {};
+			const nodes = preview.nodes || [];
+			let text;
+			if (!nodes.length) {
+				text = preview.error || '没有节点配置 DDNS 域名（这些节点只测速）。';
+			} else {
+				text = nodes.map((item) => item.error
+					? (item.node || '?') + ' → ' + item.domain + '：' + item.error
+					: (item.node || '?') + ' → ' + item.domain + '：' + (item.ips || []).join(', ')
+				).join('\n');
+				if (!preview.enabled) text += '\n（DDNS 当前未启用，预览不会写入）';
+			}
+			setText('ddns-status', text);
+		} catch (e) {
+			toast(e.message, true);
+		}
+	}
+
+	async function applyDdns() {
+		const button = $('#btn-ddns-apply');
+		if (button) button.disabled = true;
+		try {
+			const data = await api('/api/ddns/apply', { method: 'POST', body: {} });
+			toast(data.message || 'DDNS 写入完成');
+			if (data.report) {
+				const failed = (data.report.nodes || []).filter((item) => item.error);
+				const lines = (data.report.nodes || []).map((item) => item.error
+					? (item.node || '?') + ' → ' + item.domain + '：' + item.error
+					: (item.node || '?') + ' → ' + item.domain + '：' + (item.ips || []).join(', ') +
+						'（新建 ' + (item.created || 0) + ' / 更新 ' + (item.updated || 0) +
+						' / 无变化 ' + (item.unchanged || 0) + '）');
+				setText('ddns-status', lines.join('\n') || data.message || '');
+				if (failed.length) toast(failed.length + ' 个节点写入失败', true);
+			}
+			await pollStatus();
+		} catch (e) {
+			toast(e.message, true);
+		} finally {
+			if (button) button.disabled = false;
+		}
 	}
 
 	async function saveConfig(successMessage) {
@@ -1207,7 +1312,7 @@
 
 		$('#btn-add-node').addEventListener('click', () => {
 			(state.config.nodes || (state.config.nodes = [])).push({
-				name: '', link: '', ip_list: '', enabled: true,
+				name: '', link: '', ip_list: '', ddns_domain: '', enabled: true,
 			});
 			renderNodes();
 		});
@@ -1228,6 +1333,8 @@
 		$('#ip_source').addEventListener('change', updateFieldVisibility);
 		$('#schedule_custom').addEventListener('change', updateFieldVisibility);
 		$('#btn-cron-refresh').addEventListener('click', refreshCronTasks);
+		$('#btn-ddns-preview').addEventListener('click', previewDdns);
+		$('#btn-ddns-apply').addEventListener('click', applyDdns);
 
 		$('#result-filter').addEventListener('change', (event) => {
 			state.resultFilter = event.target.value;
