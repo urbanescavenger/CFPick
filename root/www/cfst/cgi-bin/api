@@ -204,16 +204,30 @@ function session_load(req) {
 
 	let lines = split(trim(fs.readfile(SESSION_FILE) || ''), '\n');
 
-	// Four lines: session token, user, expiry, CSRF token.  Three-line
-	// sessions from the previous build are treated as expired and require
-	// a fresh login.
-	if (length(lines) < 4 || lines[3] == '')
+	// Three-line sessions from the previous build are upgraded in place with
+	// a fresh CSRF token, so existing browser logins survive the upgrade.
+	if (length(lines) < 3)
 		return null;
 
 	if (lines[0] != token || int(lines[2]) <= time())
 		return null;
 
-	return { user: lines[1] || '', csrf: lines[3] };
+	let csrf = lines[3] || '';
+
+	if (csrf == '') {
+		csrf = random_token();
+
+		let fd = fs.open(SESSION_FILE, 'w');
+
+		if (fd) {
+			fd.write(lines[0] + '\n' + lines[1] + '\n' + lines[2] + '\n' + csrf + '\n');
+			fd.close();
+		}
+
+		try { fs.chmod(SESSION_FILE, 0600); } catch (e) {}
+	}
+
+	return { user: lines[1] || '', csrf: csrf };
 }
 
 function session_clear() {
