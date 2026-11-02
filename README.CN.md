@@ -31,37 +31,38 @@
 
 ## 界面页面
 
-插件在 LuCI → 服务 → PassWall Speed Test 下提供四个页面，另有一套可选的独立 Web 操作台：
+插件在 LuCI → 服务 → PassWall Speed Test 下只有两个入口，和 Lucky 的布局一致：
 
-*   **管理页（Management）**：运行状态、开始/停止/复测、各节点最优 IP、最近历史、只读定时任务列表和实时日志；基于下文的管理 API。
-*   **主设置页（Plugin Settings）**：包含「基本 / 计划 / Web 操作台」三个 Tab，提供 Start/Stop 测速按钮、3 秒轮询的状态条、Best IP 只读区，以及延迟历史折线图。
-*   **第三方集成页（Third Party Settings）**：按本机已安装的代理软件按需显示对应 Tab；此处选中的 passwall 节点同时作为多线程 worker。
-*   **日志页（Logs）**：增量拉取测速日志，可勾选每 5 秒自动刷新。
+*   **操作台（Console）**：显示测速运行状态、Web 操作台地址，以及「打开 Web 操作台」按钮；实际操作都在独立操作台里完成。
+*   **设置（Settings）**：完整配置页，包含「基本 / 计划 / Web 操作台」、CM IP 列表、第三方集成、worker 节点指派和 Best IP。
 
 ## 独立 Web 操作台
 
-除了 LuCI 页面，插件还可以在独立端口启动一套 Web 操作台（`cfst-web`），像 Lucky 一样有自己的登录和操作界面；LuCI 继续负责完整配置。
+独立操作台（`cfst-web`）在单独端口运行，有自己的登录和管理界面；LuCI 的「设置」保留完整配置，两边数据一致。
 
 ### 启用
 
-1. LuCI → 服务 → PassWall Speed Test → **插件设置 → Web 操作台**；
+1. LuCI → 服务 → PassWall Speed Test → **设置 → Web 操作台**；
 2. 勾选「启用独立操作台」，设置端口（默认 **17544**，避开 Lucky 常用的 17543）、监听地址和用户名；
 3. 保存并应用，服务会自动启动；
 4. 浏览器打开 `http://<路由器IP>:17544/`，首次会要求创建管理员密码（至少 6 位）。
 
 密码只以加盐 SHA-256 哈希保存在 UCI（`passwall-speedtest.global.web_password`），不保存明文；会话 Cookie 为 `HttpOnly` + `SameSite=Strict`，写操作还要求自定义请求头，防止 CSRF。
 
-### 操作台能做什么
+### 操作台页签
 
-*   **操作台页签**：运行状态、开始/停止/复测、各节点最优 IP、最近历史、定时任务、实时日志；
-*   **配置页签**：IP 来源、延迟/丢包阈值、探测参数、下载实测、限时迭代、定时任务（五段 cron）、IP 列表、测试/稳定节点；
-*   worker 节点指派、第三方集成等高级项仍在 LuCI 中配置，操作台配置页有直达链接。
+*   **概览**：运行状态、开始/停止/复测、各节点最优 IP、最近历史、定时任务。
+*   **节点**：单节点/稳定节点，以及 worker 表（每个 PassWall 节点一行，并指派 CM IP 列表）。
+*   **IP 列表**：五个 CM 源列表的启用、名称、国家码和端口。
+*   **设置**：IP 来源、延迟/丢包阈值、探测参数、下载实测、限时迭代、五段 cron、操作台账号。
+*   **日志**：实时日志，可自动刷新。
+*   **第三方**：SSR+ / PassWall / PassWall2 / Bypass / Vssr / HOST / 阿里云 DNS / MosDNS / astra-dns 的写回配置。
 
 操作台内部调用同一套 `api_*` 管理 API，因此和 LuCI 页面看到的数据完全一致。
 
 ### 账号与安全
 
-*   修改密码：操作台「配置 → 操作台账号」，修改后需要重新登录。
+*   修改密码：操作台「设置 → 操作台账号」，修改后需要重新登录。
 *   忘记密码：SSH 执行
     ```sh
     uci delete passwall-speedtest.global.web_password

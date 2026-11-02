@@ -613,3 +613,30 @@ msgstr "打开操作台"
 
 msgid "The console listens on its own port. On first use it asks you to create the admin password. For remote access use a VPN or a TLS reverse proxy; do not expose the plain HTTP port to the internet."
 msgstr "操作台使用独立端口；首次打开会要求创建管理员密码。远程访问请走 VPN 或带 TLS 的反向代理，不要把明文 HTTP 端口直接暴露到公网。"
+
+msgid "Console"
+msgstr "操作台"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Open web console"
+msgstr "打开 Web 操作台"
+
+msgid "Web console"
+msgstr "Web 操作台"
+
+msgid "The standalone console is the main operations UI: overview, nodes, IP lists, settings, logs and third-party integrations. This LuCI page only shows its status and opens it."
+msgstr "独立操作台是主要管理界面：概览、节点、IP 列表、设置、日志和第三方集成。本 LuCI 页面只显示运行状态并提供打开入口。"
+
+msgid "The console has its own login. On first open it asks you to create the admin password."
+msgstr "操作台有独立登录；首次打开会要求创建管理员密码。"
+
+msgid "Enable it in Settings → Web Console and save."
+msgstr "请在「设置 → Web 操作台」中启用并保存。"
+
+msgid "Full configuration stays available in "
+msgstr "完整配置仍可在 "
+
+msgid "."
+msgstr "。"

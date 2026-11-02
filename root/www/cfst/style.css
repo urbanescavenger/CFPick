@@ -87,7 +87,7 @@ a:hover { text-decoration: underline; }
 }
 .brand { font-size: 1.05rem; font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; }
 .brand span { margin-left: 5px; font-size: 0.74rem; font-weight: 600; color: var(--muted); }
-.tabs { display: flex; gap: 4px; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tab {
 	border: 0; background: transparent; color: var(--muted);
 	padding: 8px 14px; border-radius: 9px; cursor: pointer;
@@ -138,6 +138,8 @@ input[type="text"], input[type="password"], input[type="number"], select, textar
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+select[multiple] { min-height: 112px; padding: 6px; }
+select[multiple] option { padding: 3px 6px; }
 .cron-grid input { font-family: var(--mono); }
 #cfg-cron-preview { font-family: var(--mono); }
 

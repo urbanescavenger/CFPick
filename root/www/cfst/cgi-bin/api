@@ -25,6 +25,31 @@ const GLOBAL_KEYS = [
 	'hour', 'node_test_node', 'stable_node'
 ];
 
+const SERVER_BOOL_KEYS = [
+	'ssr_enabled', 'passwall_enabled', 'passwall2_enabled', 'bypass_enabled',
+	'vssr_enabled', 'HOST_enabled', 'DNS_enabled', 'MosDNS_enabled',
+	'openclash_restart', 'AstraDNS_enabled'
+];
+const SERVER_INT_KEYS = [ 'AliDNS_ip_count', 'MosDNS_ip_count' ];
+const SERVER_LIST_KEYS = [
+	'ssr_services', 'passwall2_services', 'bypass_services', 'vssr_services',
+	'sub_domain'
+];
+const SERVER_TEXT_KEYS = [
+	'host_domain', 'DNS_type', 'app_key', 'app_secret', 'main_domain', 'line',
+	'AstraDNS_config', 'AstraDNS_bin'
+];
+const SERVER_ALL_KEYS = [
+	'ssr_enabled', 'passwall_enabled', 'passwall2_enabled', 'bypass_enabled',
+	'vssr_enabled', 'HOST_enabled', 'DNS_enabled', 'MosDNS_enabled',
+	'openclash_restart', 'AstraDNS_enabled',
+	'AliDNS_ip_count', 'MosDNS_ip_count',
+	'ssr_services', 'passwall2_services', 'bypass_services', 'vssr_services',
+	'sub_domain',
+	'host_domain', 'DNS_type', 'app_key', 'app_secret', 'main_domain', 'line',
+	'AstraDNS_config', 'AstraDNS_bin'
+];
+
 const input_bufsize = 4096;
 let input_available = +getenv('CONTENT_LENGTH') || 0;
 
@@ -234,50 +259,6 @@ function uci_get(cur, section, option, fallback) {
 	return (value == null) ? fallback : value;
 }
 
-function read_config() {
-	let cur = uci.cursor();
-	let global = {};
-	let lists = [];
-
-	try {
-		cur.load(CONFIG);
-	}
-	catch (e) {}
-
-	for (let i = 0; i < length(GLOBAL_KEYS); i++) {
-		let key = GLOBAL_KEYS[i];
-
-		global[key] = uci_get(cur, 'global', key, '');
-	}
-
-	for (let i = 1; i <= 5; i++) {
-		let section = 'list' + i;
-		let regions = uci_get(cur, section, 'regions', '');
-
-		if (type(regions) == 'array')
-			regions = join(' ', regions);
-
-		push(lists, {
-			enabled: uci_get(cur, section, 'enabled', '0') == '1',
-			name: uci_get(cur, section, 'name', ''),
-			regions: regions,
-			port: uci_get(cur, section, 'port', '443')
-		});
-	}
-
-	let workers = [];
-
-	cur.foreach(CONFIG, 'node_ip', function(section) {
-		push(workers, {
-			name: section['.name'] || '',
-			node: section.node || '',
-			ip_list: section.ip_list || ''
-		});
-	});
-
-	return { global: global, ip_lists: lists, workers: workers };
-}
-
 function to_bool(value) {
 	return (value === true || value === 1 || value == '1' || value == 'true') ? '1' : '0';
 }
@@ -341,6 +322,199 @@ function valid_regions(value) {
 			return false;
 
 	return true;
+}
+
+function has_key(list, key) {
+	for (let i = 0; i < length(list); i++)
+		if (list[i] == key)
+			return true;
+
+	return false;
+}
+
+function token_list(value, maxlen) {
+	let out = [];
+
+	if (type(value) == 'array') {
+		for (let i = 0; i < length(value); i++) {
+			let token = clean_text(value[i], maxlen);
+
+			if (token != '')
+				push(out, token);
+		}
+	}
+	else {
+		let parts = split(replace(clean_text(value, 4096), /[ ,]+/g, ' '), ' ');
+
+		for (let i = 0; i < length(parts); i++)
+			if (parts[i] != '')
+				push(out, clean_text(parts[i], maxlen));
+	}
+
+	return out;
+}
+
+function read_servers(cur) {
+	let out = {};
+
+	for (let i = 0; i < length(SERVER_ALL_KEYS); i++) {
+		let key = SERVER_ALL_KEYS[i];
+		let value = uci_get(cur, 'servers', key, '');
+
+		if (has_key(SERVER_LIST_KEYS, key))
+			out[key] = token_list(value, 255);
+		else
+			out[key] = (type(value) == 'array') ? join(' ', value) : value;
+
+		if (key == 'app_secret' && out[key] != '')
+			out[key] = '***';
+	}
+
+	return out;
+}
+
+function save_servers(cur, input) {
+	for (let i = 0; i < length(SERVER_ALL_KEYS); i++) {
+		let key = SERVER_ALL_KEYS[i];
+		let value = input[key];
+
+		if (value == null)
+			continue;
+
+		if (has_key(SERVER_BOOL_KEYS, key)) {
+			cur.set(CONFIG, 'servers', key, to_bool(value));
+		}
+		else if (has_key(SERVER_INT_KEYS, key)) {
+			cur.set(CONFIG, 'servers', key, to_int(value, 1, 1, 100));
+		}
+		else if (has_key(SERVER_LIST_KEYS, key)) {
+			let tokens = token_list(value, 255);
+
+			for (let j = 0; j < length(tokens); j++) {
+				if (key == 'sub_domain') {
+					if (tokens[j] != '@' && !match(tokens[j], /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/))
+						return '子域名格式无效';
+				}
+				else if (!match(tokens[j], /^[A-Za-z0-9_]+$/)) {
+					return '节点名称格式无效';
+				}
+			}
+
+			cur.set(CONFIG, 'servers', key, tokens);
+		}
+		else if (key == 'app_secret') {
+			// The browser only ever sees "***"; keep the stored secret then.
+			if (value != '***')
+				cur.set(CONFIG, 'servers', key, clean_text(value, 256));
+		}
+		else if (key == 'DNS_type') {
+			let dns_type = clean_text(value, 32) || 'aliyun';
+
+			if (dns_type != 'aliyun')
+				return 'DNS 类型只支持阿里云';
+
+			cur.set(CONFIG, 'servers', key, dns_type);
+		}
+		else if (key == 'line') {
+			let line = clean_text(value, 32) || 'default';
+
+			if (!match(line, /^(default|telecom|unicom|mobile)$/))
+				return 'DNS 线路无效';
+
+			cur.set(CONFIG, 'servers', key, line);
+		}
+		else {
+			cur.set(CONFIG, 'servers', key, clean_text(value, 500));
+		}
+	}
+
+	return '';
+}
+
+function save_workers(cur, workers) {
+	let existing = [];
+
+	cur.foreach(CONFIG, 'node_ip', function(section) {
+		push(existing, section['.name']);
+	});
+
+	let used = 0;
+
+	for (let i = 0; i < length(workers); i++) {
+		let item = (type(workers[i]) == 'object') ? workers[i] : {};
+		let node = clean_text(item.node, 64);
+		let ip_list = clean_text(item.ip_list, 16);
+
+		if (node == '')
+			continue;
+
+		if (!match(node, /^[A-Za-z0-9_]+$/))
+			return 'worker 节点名称无效';
+
+		if (ip_list != '' && !match(ip_list, /^list[1-5]$/))
+			return 'worker IP 列表无效';
+
+		let name;
+
+		if (used < length(existing))
+			name = existing[used];
+		else
+			name = cur.add(CONFIG, 'node_ip');
+
+		cur.set(CONFIG, name, 'node', node);
+		cur.set(CONFIG, name, 'ip_list', ip_list);
+		used++;
+	}
+
+	for (let i = used; i < length(existing); i++)
+		cur.delete(CONFIG, existing[i]);
+
+	return '';
+}
+
+function read_config() {
+	let cur = uci.cursor();
+	let global = {};
+	let lists = [];
+
+	try {
+		cur.load(CONFIG);
+	}
+	catch (e) {}
+
+	for (let i = 0; i < length(GLOBAL_KEYS); i++) {
+		let key = GLOBAL_KEYS[i];
+
+		global[key] = uci_get(cur, 'global', key, '');
+	}
+
+	for (let i = 1; i <= 5; i++) {
+		let section = 'list' + i;
+		let regions = uci_get(cur, section, 'regions', '');
+
+		if (type(regions) == 'array')
+			regions = join(' ', regions);
+
+		push(lists, {
+			enabled: uci_get(cur, section, 'enabled', '0') == '1',
+			name: uci_get(cur, section, 'name', ''),
+			regions: regions,
+			port: uci_get(cur, section, 'port', '443')
+		});
+	}
+
+	let workers = [];
+
+	cur.foreach(CONFIG, 'node_ip', function(section) {
+		push(workers, {
+			name: section['.name'] || '',
+			node: section.node || '',
+			ip_list: section.ip_list || ''
+		});
+	});
+
+	return { global: global, ip_lists: lists, workers: workers,
+		servers: read_servers(cur) };
 }
 
 function save_config(req) {
@@ -435,6 +609,24 @@ function save_config(req) {
 			cur.set(CONFIG, 'list' + (i + 1), 'port', to_int(item.port, 443, 1, 65535));
 			changed = true;
 		}
+	}
+
+	if (type(body.servers) == 'object') {
+		let error = save_servers(cur, body.servers);
+
+		if (error != '')
+			return send(req, fail(error), '400 Bad Request');
+
+		changed = true;
+	}
+
+	if (type(body.workers) == 'array') {
+		let error = save_workers(cur, body.workers);
+
+		if (error != '')
+			return send(req, fail(error), '400 Bad Request');
+
+		changed = true;
 	}
 
 	if (changed) {

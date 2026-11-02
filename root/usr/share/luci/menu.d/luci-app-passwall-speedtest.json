@@ -11,39 +11,21 @@
 		}
 	},
 
-	"admin/services/passwall-speedtest/manage": {
-		"title": "Management",
-		"order": 0,
-		"action": {
-			"type": "view",
-			"path": "passwall-speedtest/manage"
-		}
-	},
-
-	"admin/services/passwall-speedtest/general": {
-		"title": "Plugin Settings",
+	"admin/services/passwall-speedtest/console": {
+		"title": "Console",
 		"order": 1,
 		"action": {
 			"type": "view",
-			"path": "passwall-speedtest/general"
+			"path": "passwall-speedtest/console"
 		}
 	},
 
-	"admin/services/passwall-speedtest/third-party": {
-		"title": "Third Party Settings",
+	"admin/services/passwall-speedtest/settings": {
+		"title": "Settings",
 		"order": 2,
 		"action": {
 			"type": "view",
-			"path": "passwall-speedtest/third-party"
-		}
-	},
-
-	"admin/services/passwall-speedtest/logread": {
-		"title": "Logs",
-		"order": 3,
-		"action": {
-			"type": "view",
-			"path": "passwall-speedtest/logread"
+			"path": "passwall-speedtest/general"
 		}
 	}
 }

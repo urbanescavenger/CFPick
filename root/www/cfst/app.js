@@ -23,6 +23,7 @@
 
 	const state = {
 		authMode: 'login',
+		tab: 'overview',
 		status: null,
 		results: null,
 		history: null,
@@ -30,6 +31,8 @@
 		nodes: null,
 		config: null,
 		ipLists: [],
+		workers: [],
+		servers: {},
 		logPos: 0,
 		lastRunning: false,
 		loggedIn: false,
@@ -75,6 +78,20 @@
 
 		if (node)
 			node.textContent = value == null ? '' : value;
+	}
+
+	function setValue(id, value) {
+		const node = $('#' + id);
+
+		if (node)
+			node.value = value == null ? '' : value;
+	}
+
+	function setCheck(id, value) {
+		const node = $('#' + id);
+
+		if (node)
+			node.checked = value === true || value === 1 || value === '1';
 	}
 
 	function toast(message, bad) {
@@ -169,6 +186,16 @@
 		return payload.data;
 	}
 
+	function storageGet(key) {
+		try { return localStorage.getItem(key); }
+		catch (e) { return null; }
+	}
+
+	function storageSet(key, value) {
+		try { localStorage.setItem(key, value); }
+		catch (e) { /* private mode */ }
+	}
+
 	function clearTimers() {
 		clearInterval(state.pollTimer);
 		clearInterval(state.logTimer);
@@ -194,16 +221,6 @@
 		$('#auth-confirm').value = '';
 		$('#auth-user').value = storageGet('cfst_web_user') || 'admin';
 		$('#auth-password').focus();
-	}
-
-	function storageGet(key) {
-		try { return localStorage.getItem(key); }
-		catch (e) { return null; }
-	}
-
-	function storageSet(key, value) {
-		try { localStorage.setItem(key, value); }
-		catch (e) { /* private mode */ }
 	}
 
 	async function onAuthSubmit(event) {
@@ -263,14 +280,6 @@
 		state.logPos = 0;
 		$('#log-view').textContent = '';
 
-		const link = $('#luci-link');
-		if (link) {
-			const host = location.hostname.indexOf(':') >= 0
-				? '[' + location.hostname + ']' : location.hostname;
-			link.href = location.protocol + '//' + host +
-				'/cgi-bin/luci/admin/services/passwall-speedtest/third-party';
-		}
-
 		await refreshAll();
 
 		if (!state.loggedIn)
@@ -279,9 +288,11 @@
 		try { await fetchLog(false); }
 		catch (e) { /* log is optional */ }
 
+		activateTab('overview');
+
 		state.pollTimer = setInterval(poll, 3000);
 		state.logTimer = setInterval(() => {
-			if ($('#log-follow').checked)
+			if (state.tab === 'logs' && $('#log-follow').checked)
 				fetchLog(true).catch(() => {});
 		}, 6000);
 	}
@@ -467,7 +478,7 @@
 
 			state.pollCount += 1;
 
-			if ($('#log-follow').checked && state.pollCount % 2 === 0)
+			if (state.tab === 'logs' && $('#log-follow').checked && state.pollCount % 2 === 0)
 				await fetchLog(true);
 		}
 		catch (e) {
@@ -493,14 +504,28 @@
 		}
 	}
 
+	function provider(name) {
+		return (state.nodes && state.nodes[name]) || {};
+	}
+
+	function providerNodes(name) {
+		return provider(name).nodes || [];
+	}
+
+	function providerExists(name) {
+		return !!provider(name).exists;
+	}
+
 	async function refreshNodes() {
 		state.nodes = await api('nodes');
 		const g = (state.config && state.config.global) || {};
 		fillNodeSelects(g.node_test_node || '', g.stable_node || '');
+		renderWorkers();
+		fillThirdParty();
 	}
 
 	function fillNodeSelects(testValue, stableValue) {
-		const nodes = ((state.nodes && state.nodes.passwall && state.nodes.passwall.nodes) || []);
+		const nodes = providerNodes('passwall');
 		const selects = [
 			['cfg-test-node', testValue],
 			['cfg-stable-node', stableValue]
@@ -534,6 +559,156 @@
 		});
 	}
 
+	function renderWorkers() {
+		const body = $('#cfg-workers-body');
+		if (!body)
+			return;
+
+		body.replaceChildren();
+
+		if (!state.workers.length) {
+			body.appendChild(el('tr', {}, [
+				el('td', { colspan: '3', class: 'empty' },
+					'暂无 worker；测速将使用上面的「单节点测速」')
+			]));
+			return;
+		}
+
+		const nodes = providerNodes('passwall');
+
+		state.workers.forEach((worker, index) => {
+			const nodeSelect = el('select');
+			nodeSelect.appendChild(el('option', { value: '' }, '-- 请选择 --'));
+
+			const seen = {};
+
+			nodes.forEach((node) => {
+				if (!node.value || seen[node.value])
+					return;
+
+				seen[node.value] = true;
+				nodeSelect.appendChild(el('option', { value: node.value },
+					node.label + (String(node.type || '').toLowerCase() === 'socks' ? '（socks）' : '')));
+			});
+
+			if (worker.node && !seen[worker.node])
+				nodeSelect.appendChild(el('option', { value: worker.node }, worker.node));
+
+			nodeSelect.value = worker.node || '';
+			nodeSelect.addEventListener('change', () => { worker.node = nodeSelect.value; });
+
+			const listSelect = el('select');
+			listSelect.appendChild(el('option', { value: '' }, '默认（第一个启用）'));
+
+			for (let i = 1; i <= 5; i++) {
+				const name = (state.ipLists[i - 1] && state.ipLists[i - 1].name) || '';
+				listSelect.appendChild(el('option', { value: 'list' + i },
+					'list' + i + (name ? ': ' + name : '')));
+			}
+
+			if (worker.ip_list && !/^list[1-5]$/.test(worker.ip_list))
+				listSelect.appendChild(el('option', { value: worker.ip_list }, worker.ip_list));
+
+			listSelect.value = worker.ip_list || '';
+			listSelect.addEventListener('change', () => { worker.ip_list = listSelect.value; });
+
+			const remove = el('button', { type: 'button', 'class': 'btn small danger' }, '删除');
+			remove.addEventListener('click', () => {
+				state.workers.splice(index, 1);
+				renderWorkers();
+			});
+
+			body.appendChild(el('tr', {}, [
+				el('td', {}, nodeSelect),
+				el('td', {}, listSelect),
+				el('td', {}, remove)
+			]));
+		});
+	}
+
+	function addWorker() {
+		state.workers.push({ node: '', ip_list: '' });
+		renderWorkers();
+	}
+
+	function fillMulti(id, nodes, values) {
+		const select = $('#' + id);
+		if (!select)
+			return;
+
+		const wanted = new Set((values || []).map((value) => String(value)));
+		const seen = {};
+
+		select.replaceChildren();
+
+		nodes.forEach((node) => {
+			if (!node.value || seen[node.value])
+				return;
+
+			seen[node.value] = true;
+
+			const option = el('option', { value: node.value },
+				node.label + (String(node.type || '').toLowerCase() === 'socks' ? '（socks）' : ''));
+			option.selected = wanted.has(String(node.value));
+			select.appendChild(option);
+		});
+
+		wanted.forEach((value) => {
+			if (!seen[value]) {
+				const option = el('option', { value: value }, value);
+				option.selected = true;
+				select.appendChild(option);
+			}
+		});
+	}
+
+	function fillThirdParty() {
+		const servers = (state.config && state.config.servers) || {};
+
+		setCheck('tp-ssr-enabled', servers.ssr_enabled);
+		fillMulti('tp-ssr-services', providerNodes('ssr'), servers.ssr_services);
+		setCheck('tp-passwall-enabled', servers.passwall_enabled);
+		setCheck('tp-passwall2-enabled', servers.passwall2_enabled);
+		fillMulti('tp-passwall2-services', providerNodes('passwall2'), servers.passwall2_services);
+		setCheck('tp-bypass-enabled', servers.bypass_enabled);
+		fillMulti('tp-bypass-services', providerNodes('bypass'), servers.bypass_services);
+		setCheck('tp-vssr-enabled', servers.vssr_enabled);
+		fillMulti('tp-vssr-services', providerNodes('vssr'), servers.vssr_services);
+
+		setCheck('tp-host-enabled', servers.HOST_enabled);
+		setValue('tp-host-domain', servers.host_domain);
+
+		setCheck('tp-dns-enabled', servers.DNS_enabled);
+		setValue('tp-dns-type', servers.DNS_type || 'aliyun');
+		setValue('tp-app-key', servers.app_key);
+		setValue('tp-app-secret', servers.app_secret ? '***' : '');
+		setValue('tp-main-domain', servers.main_domain);
+		setValue('tp-sub-domain', Array.isArray(servers.sub_domain)
+			? servers.sub_domain.join(' ') : (servers.sub_domain || ''));
+		setValue('tp-dns-line', servers.line || 'default');
+		setValue('tp-alidns-count', servers.AliDNS_ip_count || '1');
+
+		setCheck('tp-mosdns-enabled', servers.MosDNS_enabled);
+		setValue('tp-mosdns-count', servers.MosDNS_ip_count || '1');
+		setCheck('tp-openclash', servers.openclash_restart);
+
+		setCheck('tp-astra-enabled', servers.AstraDNS_enabled);
+		setValue('tp-astra-config', servers.AstraDNS_config || '/etc/astra-dns/named.yaml');
+		setValue('tp-astra-bin', servers.AstraDNS_bin || '/usr/bin/astra-dns');
+
+		if (state.nodes) {
+			['ssr', 'passwall2', 'bypass', 'vssr'].forEach((name) => {
+				const card = $('#tp-' + name);
+				if (card)
+					card.classList.toggle('hidden', !providerExists(name));
+			});
+
+			const passwallCard = $('#tp-passwall');
+			if (passwallCard)
+				passwallCard.classList.toggle('hidden', !providerExists('passwall'));
+		}
+	}
+
 	async function loadConfig() {
 		state.config = await api('config');
 		state.ipLists = ((state.config && state.config.ip_lists) || []).map((item) => ({
@@ -546,19 +721,13 @@
 		while (state.ipLists.length < 5)
 			state.ipLists.push({ enabled: false, name: '', regions: '', port: '443' });
 
+		state.workers = ((state.config && state.config.workers) || []).map((item) => ({
+			node: item.node || '',
+			ip_list: item.ip_list || ''
+		}));
+		state.servers = (state.config && state.config.servers) || {};
+
 		fillConfig();
-	}
-
-	function setValue(id, value) {
-		const node = $('#' + id);
-		if (node)
-			node.value = value == null ? '' : value;
-	}
-
-	function setCheck(id, value) {
-		const node = $('#' + id);
-		if (node)
-			node.checked = value === true || value === 1 || value === '1';
 	}
 
 	function fillConfig() {
@@ -592,6 +761,8 @@
 		fillCron(expression);
 		renderIpLists();
 		fillNodeSelects(g.node_test_node || '', g.stable_node || '');
+		renderWorkers();
+		fillThirdParty();
 		updateSourceVisibility();
 	}
 
@@ -679,7 +850,7 @@
 
 		body.replaceChildren();
 
-		state.ipLists.forEach((item, index) => {
+		state.ipLists.forEach((item) => {
 			const enabled = el('input', { type: 'checkbox', checked: !!item.enabled });
 			const name = el('input', { type: 'text', value: item.name || '', placeholder: '名称' });
 			const regions = el('input', { type: 'text', class: 'regions', value: item.regions || '', placeholder: 'JP SG KR' });
@@ -718,6 +889,17 @@
 		return !!(node && node.checked);
 	}
 
+	function selectedValues(id) {
+		const select = $('#' + id);
+
+		if (!select)
+			return [];
+
+		return Array.prototype.slice.call(select.selectedOptions || [])
+			.map((option) => option.value)
+			.filter((value) => !!value);
+	}
+
 	function validateCron() {
 		const parts = cronParts();
 
@@ -739,6 +921,9 @@
 	}
 
 	function collectConfig() {
+		if (!state.config)
+			throw new Error('配置尚未加载完成');
+
 		const cron = validateCron();
 		const stableNode = textValue('cfg-stable-node');
 
@@ -777,29 +962,50 @@
 				name: item.name || '',
 				regions: item.regions || '',
 				port: parseInt(item.port, 10) || 443
-			}))
+			})),
+			workers: state.workers
+				.filter((item) => !!String(item.node || '').trim())
+				.map((item) => ({ node: String(item.node).trim(), ip_list: item.ip_list || '' })),
+			servers: {
+				ssr_enabled: checkValue('tp-ssr-enabled'),
+				ssr_services: selectedValues('tp-ssr-services'),
+				passwall_enabled: checkValue('tp-passwall-enabled'),
+				passwall2_enabled: checkValue('tp-passwall2-enabled'),
+				passwall2_services: selectedValues('tp-passwall2-services'),
+				bypass_enabled: checkValue('tp-bypass-enabled'),
+				bypass_services: selectedValues('tp-bypass-services'),
+				vssr_enabled: checkValue('tp-vssr-enabled'),
+				vssr_services: selectedValues('tp-vssr-services'),
+				HOST_enabled: checkValue('tp-host-enabled'),
+				host_domain: textValue('tp-host-domain'),
+				DNS_enabled: checkValue('tp-dns-enabled'),
+				DNS_type: textValue('tp-dns-type') || 'aliyun',
+				app_key: textValue('tp-app-key'),
+				app_secret: textValue('tp-app-secret'),
+				main_domain: textValue('tp-main-domain'),
+				sub_domain: textValue('tp-sub-domain'),
+				line: textValue('tp-dns-line') || 'default',
+				AliDNS_ip_count: intValue('tp-alidns-count', 1),
+				MosDNS_enabled: checkValue('tp-mosdns-enabled'),
+				MosDNS_ip_count: intValue('tp-mosdns-count', 1),
+				openclash_restart: checkValue('tp-openclash'),
+				AstraDNS_enabled: checkValue('tp-astra-enabled'),
+				AstraDNS_config: textValue('tp-astra-config'),
+				AstraDNS_bin: textValue('tp-astra-bin')
+			}
 		};
 	}
 
-	async function saveConfig(event) {
-		event.preventDefault();
-
-		const hint = $('#save-hint');
-		if (hint)
-			hint.textContent = '正在保存…';
-
+	async function saveConfig() {
 		try {
 			const body = collectConfig();
 			await api('config', { method: 'POST', body: body });
 			await loadConfig();
+			await refreshNodes();
 			await refreshStatus();
-			if (hint)
-				hint.textContent = '已保存 ' + new Date().toLocaleTimeString();
 			toast('配置已保存');
 		}
 		catch (e) {
-			if (hint)
-				hint.textContent = '';
 			toast(e.message, true);
 		}
 	}
@@ -855,18 +1061,24 @@
 	}
 
 	function activateTab(name) {
+		state.tab = name;
 		$$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
 		$$('.pane').forEach((pane) => pane.classList.toggle('active', pane.id === 'pane-' + name));
 
-		if (name === 'config') {
-			refreshNodes().catch(() => {});
-			loadConfig().catch(() => {});
-		}
+		if (name === 'logs')
+			fetchLog(true).catch(() => {});
+	}
+
+	function updateSourceVisibility() {
+		const source = $('#cfg-ip-source').value;
+
+		$('#row-ip-online').classList.toggle('hidden', source !== 'online');
+		$('#row-custom-file').classList.toggle('hidden', source !== 'custom_file');
+		$('#row-custom-allip').classList.toggle('hidden', source !== 'custom_file');
 	}
 
 	function bindEvents() {
 		$('#auth-form').addEventListener('submit', onAuthSubmit);
-		$('#config-form').addEventListener('submit', saveConfig);
 		$('#password-form').addEventListener('submit', changePassword);
 		$('#btn-logout').addEventListener('click', logout);
 
@@ -880,7 +1092,12 @@
 		$('#btn-retest').addEventListener('click', () => runAction('retest', '已开始复测'));
 		$('#btn-stop').addEventListener('click', () => runAction('stop', '已请求停止'));
 
+		$('#btn-add-worker').addEventListener('click', addWorker);
 		$('#btn-log-clear').addEventListener('click', () => { $('#log-view').textContent = ''; });
+
+		$$('.save-config').forEach((button) => {
+			button.addEventListener('click', saveConfig);
+		});
 
 		$('#cfg-cron-preset').addEventListener('change', applyCronPreset);
 		CRON_FIELDS.forEach(([id]) => {
@@ -890,14 +1107,6 @@
 		});
 
 		$('#cfg-ip-source').addEventListener('change', updateSourceVisibility);
-	}
-
-	function updateSourceVisibility() {
-		const source = $('#cfg-ip-source').value;
-
-		$('#cfg-ip-online-url').closest('label').style.display = source === 'online' ? '' : 'none';
-		$('#cfg-custom-ip-file').closest('label').style.display = source === 'custom_file' ? '' : 'none';
-		$('#cfg-custom-allip').closest('label').style.display = source === 'custom_file' ? '' : 'none';
 	}
 
 	async function boot() {
