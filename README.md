@@ -31,11 +31,10 @@
 
 ## UI Pages
 
-Three entries under LuCI → Services → PassWall Speed Test:
+Only two entries under LuCI → Services → PassWall Speed Test, similar to Lucky:
 
-*   **Console**: shows the test status, the standalone console URL and an "Open web console" button; the actual operations happen in the standalone console.
+*   **Console**: shows the test status, the standalone console URL and an "Open web console" button; the actual operations happen in the standalone console. The "Standalone Engine" tab added in 2.1 lives inside that console.
 *   **Settings**: only the console entry settings: enable, port, listen address, username, session timeout, open console and reset password. All speed-test settings and operations live in the console tabs.
-*   **Standalone Engine**: manages the built-in core-based engine (mihomo / Xray-core) added in 2.1, see below.
 
 ## Standalone Web Console
 
@@ -80,8 +79,8 @@ Since 2.1 the package also ships an **engine that does not use PassWall's `run_s
 
 *   **Two cores**: mihomo and Xray-core, selectable. Existing `/usr/bin/mihomo` and `/usr/bin/xray` (usually installed by PassWall) are reused; if missing, the console's "Cores" tab downloads them from GitHub into `/etc/cf-speedtest/state/core`.
 *   **No double proxying**: core outbounds carry `mark 255` (mihomo `routing-mark`, Xray `sockopt.mark`), which matches PassWall's existing `meta mark 255 return` in its OUTPUT chains. Router-local traffic may be globally proxied, but the test stays single-hop: local SOCKS → node. **No PassWall configuration changes are needed.** For cores without mark support (ss/hysteria2), use the Xray core or temporarily add the target IP to `psw_vps` (runtime nftset; no config change, no restart).
-*   **Entry**: LuCI → Services → PassWall Speed Test → **Standalone Engine**. The page can enable/disable the service, start/stop the engine and open the console.
-*   **Standalone console**: `http://<router-ip>:17545/` by default, with a random access token generated on first install. The LuCI button appends `?token=...` automatically. Listen address, port and token live in `/etc/cf-speedtest/config.json` (mode 0600).
+*   **Entry**: the **Standalone Engine** tab inside the operations console (`http://<router-ip>:17544/` by default). It can enable/disable the service, start/stop the engine and open the engine console; LuCI no longer gets a separate page.
+*   **Standalone console**: `http://<router-ip>:17545/` by default, with a random access token generated on first install. The tab's "Open" button appends `?token=...` automatically. Listen address, port and token live in `/etc/cf-speedtest/config.json` (mode 0600).
 *   **CLI**:
     ```sh
     cfst status

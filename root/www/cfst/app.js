@@ -25,6 +25,7 @@
 		authMode: 'login',
 		tab: 'overview',
 		status: null,
+		standalone: null,
 		results: null,
 		history: null,
 		tasks: null,
@@ -312,6 +313,7 @@
 			refreshHistory(),
 			refreshTasks(),
 			refreshNodes(),
+			refreshStandalone(),
 			loadConfig()
 		]);
 
@@ -361,6 +363,83 @@
 		$('#btn-start').disabled = running;
 		$('#btn-retest').disabled = running;
 		$('#btn-stop').disabled = !running;
+	}
+
+	// ── 独立测速引擎（自带 mihomo / Xray 内核） ─────────────────────
+	async function refreshStandalone() {
+		state.standalone = await api('standalone');
+		renderStandalone();
+	}
+
+	function standaloneUrl(data) {
+		data = data || {};
+		const web = data.web || {};
+
+		if (!web.port)
+			return '';
+
+		const host = window.location.hostname;
+		const hostPart = host.indexOf(':') >= 0 ? '[' + host + ']' : host;
+		const token = web.token ? '?token=' + encodeURIComponent(web.token) : '';
+
+		return 'http://' + hostPart + ':' + web.port + '/' + token;
+	}
+
+	function renderStandalone() {
+		const data = state.standalone || {};
+		const engine = data.engine || {};
+		const web = data.web || {};
+		const cores = engine.cores || {};
+		const type = engine.core_type || '';
+		const info = cores[type] || {};
+		const listen = web.listen || '';
+		const loopback = !listen || listen === '127.0.0.1'
+			|| listen === 'localhost' || listen === '::1';
+		const url = standaloneUrl(data);
+
+		setText('sa-service', data.service_running ? '运行中' : '已停止');
+		setText('sa-service-sub', data.service_enabled ? '开机自启' : '未设开机自启');
+		setText('sa-engine', engine.running ? '测速运行中' : '空闲');
+		setText('sa-engine-sub', engine.phase ? phaseLabel(engine.phase) : '—');
+		setText('sa-core', type || '未检测');
+		setText('sa-core-sub', info.installed
+			? '已安装' + (info.version ? ' · ' + info.version : '')
+			: '未安装');
+		setText('sa-best', engine.best_ip || '—');
+
+		const input = $('#sa-url');
+		if (input)
+			input.value = url || '不可用';
+
+		$('#btn-sa-open').disabled = !url || !data.service_running || loopback;
+		$('#btn-sa-enable').disabled = !!data.service_enabled;
+		$('#btn-sa-disable').disabled = !data.service_enabled;
+		$('#btn-sa-start').disabled = !!data.service_running;
+		$('#btn-sa-stop').disabled = !data.service_running;
+	}
+
+	async function standaloneAction(action, message) {
+		const buttons = ['#btn-sa-enable', '#btn-sa-start', '#btn-sa-stop', '#btn-sa-disable']
+			.map((id) => $(id));
+
+		buttons.forEach((button) => { button.disabled = true; });
+
+		try {
+			const result = await api('standalone_' + action, { method: 'POST' });
+
+			if (result && result.code != null && result.code !== 0)
+				toast('操作返回 ' + result.code, true);
+			else if (message)
+				toast(message);
+
+			await refreshStandalone();
+		}
+		catch (e) {
+			toast(e.message || '操作失败', true);
+		}
+		finally {
+			renderStandalone();
+		}
 	}
 
 	async function refreshResults() {
@@ -488,6 +567,9 @@
 
 			if (state.tab === 'logs' && $('#log-follow').checked && state.pollCount % 2 === 0)
 				await fetchLog(true);
+
+			if (state.tab === 'standalone')
+				await refreshStandalone().catch(() => {});
 		}
 		catch (e) {
 			/* 401 handled by api(); transient errors are ignored until the next poll */
@@ -1076,6 +1158,9 @@
 
 		if (name === 'logs')
 			fetchLog(true).catch(() => {});
+
+		if (name === 'standalone')
+			refreshStandalone().catch(() => {});
 	}
 
 	function updateSourceVisibility() {
@@ -1100,6 +1185,20 @@
 		$('#btn-start').addEventListener('click', () => runAction('start', '已开始测速'));
 		$('#btn-retest').addEventListener('click', () => runAction('retest', '已开始复测'));
 		$('#btn-stop').addEventListener('click', () => runAction('stop', '已请求停止'));
+
+		$('#btn-sa-refresh').addEventListener('click', () => {
+			refreshStandalone().catch((e) => toast(e.message || '刷新失败', true));
+		});
+		$('#btn-sa-enable').addEventListener('click', () => standaloneAction('enable', '已启用并启动'));
+		$('#btn-sa-start').addEventListener('click', () => standaloneAction('start', '已启动'));
+		$('#btn-sa-stop').addEventListener('click', () => standaloneAction('stop', '已停止'));
+		$('#btn-sa-disable').addEventListener('click', () => standaloneAction('disable', '已停用'));
+		$('#btn-sa-open').addEventListener('click', () => {
+			const url = standaloneUrl(state.standalone);
+
+			if (url)
+				window.open(url, '_blank');
+		});
 
 		$('#btn-add-worker').addEventListener('click', addWorker);
 		$('#btn-log-clear').addEventListener('click', () => { $('#log-view').textContent = ''; });

@@ -32,11 +32,10 @@
 
 ## 界面页面
 
-插件在 LuCI → 服务 → PassWall Speed Test 下有三个入口：
+插件在 LuCI → 服务 → PassWall Speed Test 下只有两个入口，和 Lucky 的布局一致：
 
-*   **操作台（Console）**：显示测速运行状态、Web 操作台地址，以及「打开 Web 操作台」按钮；实际操作都在独立操作台里完成。
+*   **操作台（Console）**：显示测速运行状态、Web 操作台地址，以及「打开 Web 操作台」按钮；实际操作都在独立操作台里完成。2.1 新增的「独立测速」页签也在操作台内。
 *   **设置（Settings）**：只保留 Web 操作台入口配置：启用、端口、监听地址、用户名、会话有效期、打开操作台、重置密码。所有测速设置和操作都在独立操作台的页签里。
-*   **独立测速（Standalone Engine）**：管理 2.1 新增的自带内核引擎（mihomo / Xray-core），见下文。
 
 ## 独立 Web 操作台
 
@@ -81,7 +80,7 @@
 
 *   **双内核**：mihomo 与 Xray-core 二选一。优先复用系统已有的 `/usr/bin/mihomo`、`/usr/bin/xray`（PassWall 通常已装）；缺失时可在操作台「内核」页从 GitHub 下载到 `/etc/cf-speedtest/state/core`。
 *   **不会被 PassWall 二次代理**：内核出站带 `mark 255`（mihomo 的 `routing-mark`、Xray 的 `sockopt.mark`），命中 PassWall OUTPUT 链里已有的 `meta mark 255 return`。因此即使路由器本机流量默认走全局代理，测速流量仍是「本地 SOCKS → 被测节点」单层；**不需要修改 PassWall 配置**。若使用 ss/hysteria2 等不支持 mark 的核心，请改用 Xray 内核，或临时把目标 IP 加入 `psw_vps`（运行时 nftset，不改配置、不重启）。
-*   **入口**：LuCI → 服务 → PassWall Speed Test → **独立测速（Standalone Engine）**。页面可启用/停用服务、启动/停止引擎，并打开独立操作台。
+*   **入口**：操作台（默认 `http://<路由器IP>:17544/`）的 **「独立测速」** 页签。页签内可启用/停用服务、启动/停止引擎，并打开独立操作台；LuCI 侧不再单独增加页面。
 *   **独立操作台**：默认 `http://<路由器IP>:17545/`，首次安装生成随机访问令牌；LuCI 页面的「打开独立操作台」会自动附加 `?token=...`。监听地址、端口和令牌保存在 `/etc/cf-speedtest/config.json`（0600）。
 *   **CLI**：
     ```sh

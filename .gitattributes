@@ -8,6 +8,8 @@
 *.css text eol=lf
 *.html text eol=lf
 *.service text eol=lf
+*.uc text eol=lf
+root/www/cfst/cgi-bin/* text eol=lf
 debian/cfst text eol=lf
 root/usr/bin/cfst text eol=lf
 root/etc/init.d/cfst text eol=lf

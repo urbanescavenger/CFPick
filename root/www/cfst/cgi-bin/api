@@ -770,6 +770,16 @@ function dispatch(req) {
 			action == 'start' ? 'api_run_start'
 			: (action == 'retest' ? 'api_run_retest' : 'api_run_stop'), {}));
 	}
+	else if (action == 'standalone') {
+		// The standalone engine's rpcd methods return their payload directly
+		// (they are also usable from LuCI/external scripts), so wrap them in
+		// the console's {ok,data} envelope here.
+		send(req, ok(ubus_call('standalone_status', {})));
+	}
+	else if (action == 'standalone_start' || action == 'standalone_stop' ||
+	         action == 'standalone_enable' || action == 'standalone_disable') {
+		send(req, ok(ubus_call(action, {})));
+	}
 	else if (action == 'config') {
 		if (method == 'POST')
 			save_config(req);
