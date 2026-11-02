@@ -197,8 +197,12 @@ def _select(cfg, nodes, rows):
         count = 1
     count = max(1, min(count, 10))
 
+    by_id = {}
     by_node = {}
     for row in rows:
+        node_id = str(getattr(row, "node_id", "") or "")
+        if node_id:
+            by_id.setdefault(node_id, []).append(row)
         if row.node:
             by_node.setdefault(row.node, []).append(row)
 
@@ -215,8 +219,10 @@ def _select(cfg, nodes, rows):
         if zone_name and "." not in domain:
             domain = "%s.%s" % (domain, zone_name)
         name = str(node.get("name") or "")
+        node_id = str(node.get("node_id") or "")
         entry = {
             "node": name,
+            "node_id": node_id,
             "domain": domain,
             "ips": [],
             "types": {},
@@ -230,7 +236,9 @@ def _select(cfg, nodes, rows):
             entry["error"] = "域名不在配置的 Zone %s 内" % zone_name
             planned.append(entry)
             continue
-        selected = by_node.get(name) or []
+        # Stable passwall section id wins so a remarks rename cannot orphan this
+        # node's results; legacy rows (no id column) fall back to the display name.
+        selected = (by_id.get(node_id) if node_id else None) or by_node.get(name) or []
         selected = selected[:count]
         if not selected:
             entry["error"] = "本次没有可用结果"
@@ -348,6 +356,7 @@ def apply(cfg, nodes, rows, log=None, client=None, when=""):
     for item in planned:
         entry = {
             "node": item["node"],
+            "node_id": item.get("node_id", ""),
             "domain": item["domain"],
             "ips": item["ips"],
             "types": item["types"],

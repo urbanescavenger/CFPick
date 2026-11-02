@@ -583,6 +583,7 @@ class Engine:
                 self._iterate_summary(node, rows)
             for row in rows:
                 row.node = node["name"]
+                row.node_id = str(node.get("id") or "")
                 merged.append(row)
 
         merged = result.sort_rows(merged, "speed")

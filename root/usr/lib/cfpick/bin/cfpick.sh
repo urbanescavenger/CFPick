@@ -304,7 +304,8 @@ build_retest_list_one() {
     fi
     if [ -f "$IP_FILE" ] && [ -n "$remarks" ]; then
         sed -n '2,$p' "$IP_FILE" 2>/dev/null | grep -av '^#' | \
-            awk -F, -v n="$remarks" 'NF>=8 && $1!="" && $8==n {print $1}' >> "$tmp"
+            awk -F, -v n="$remarks" -v id="$nodeid" \
+                'NF>=8 && $1!="" && ((NF>=9 && $9!="" && $9==id) || ((NF<9 || $9=="") && $8==n)) {print $1}' >> "$tmp"
     fi
     awk '!seen[$0]++' "$tmp" | head -n "$maxn" > "$out"
     rm -f "$tmp"
@@ -336,7 +337,8 @@ function append_persistent_history(){
     if mkdir -p "$HISTORY_DIR" 2>/dev/null; then
         {
             grep -a '^# Speed test time:' "$mfile" | head -n1
-            sed -n '2,$p' "$mfile" | grep -av '^#' | awk -F, 'NF>=8 && $1!="" && $8!="" && !seen[$8]++'
+            sed -n '2,$p' "$mfile" | grep -av '^#' | \
+                awk -F, 'NF>=8 && $1!="" && $8!="" { k=(NF>=9 && $9!="")?$9:$8; if (!seen[k]++) print }'
         } >> "$HISTORY_DIR/history.csv"
         if [ "$(wc -l < "$HISTORY_DIR/history.csv")" -gt "$HISTORY_MAX_LINES" ]; then
             tail -n "$HISTORY_MAX_LINES" "$HISTORY_DIR/history.csv" \
@@ -1238,7 +1240,8 @@ node_iterate_worker() {
         {
             echo "IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区码"
             sed -n '2,$p' "$IP_FILE" 2>/dev/null | grep -av '^#' | \
-                awk -F, -v n="$_pname" 'NF>=8 && $1!="" && $8==n {print $1","$2","$3","$4","$5","$6","$7}'
+                awk -F, -v n="$_pname" -v id="$_W" \
+                    'NF>=8 && $1!="" && ((NF>=9 && $9!="" && $9==id) || ((NF<9 || $9=="") && $8==n)) {print $1","$2","$3","$4","$5","$6","$7}'
         } > "${_rfile}.prev"
         # 只有表头 = 该节点在 result.csv 里没有旧结果
         [ "$(awk 'END{print NR+0}' "${_rfile}.prev")" -gt 1 ] || rm -f "${_rfile}.prev"
@@ -1609,7 +1612,7 @@ node_speed_test() {
             local merged reapply
             merged="$(mktemp "${RUN_DIR}/result.csv.merged.XXXXXX")"
             reapply="$(mktemp "${RUN_DIR}/node_test_reapply.XXXXXX")"
-            echo "IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区码,节点" > "$merged"
+            echo "IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区码,节点,节点ID" > "$merged"
             local mi mw morig mwfile mwbest
             while read -r mi mw morig; do
                 [ -n "$mw" ] || continue
@@ -1635,9 +1638,11 @@ node_speed_test() {
                 # worker 无论提前收敛还是跑到时限退出，此处统一按「节点名一行 + 逐行结果」汇总
                 [ "${ITERATE_MODE:-0}" = "1" ] && iterate_log_final_summary "$mwname" "$mwfile"
                 # awk 过滤丢掉被杀 worker kill -9 中途截断的脏行（NF<7），正常 7 列行等价；
-                # 末列追加节点备注名（逗号替换为空格防 CSV 断列），供前端按节点查看
+                # 末两列追加节点备注名（逗号替换为空格防 CSV 断列）和 passwall section ID。
+                # ID 是稳定主键：复测/历史/DDNS 都按它匹配，改 remarks 不会再把节点认丢。
                 local _nname="${mwname//,/ }"
-                sed '1d' "$mwfile" 2>/dev/null | awk -F, -v n="$_nname" 'NF>=7 && $1!="" {print $0 "," n}' >> "$merged"
+                sed '1d' "$mwfile" 2>/dev/null | \
+                    awk -F, -v n="$_nname" -v id="$mw" 'NF>=7 && $1!="" {print $0 "," n "," id}' >> "$merged"
                 rm -f "$mwfile" "${mwfile}.meta" "${mwfile}.prev" 2>/dev/null
             done < "$NT_ORIG_FILE"
             rm -f "${NT_ORIG_FILE}"; NT_ORIG_FILE=""
@@ -1764,10 +1769,12 @@ node_speed_test() {
         return 1
     fi
 
-    # 数据行末列追加节点备注名（与多 worker 合并段的 result.csv 列结构一致，逗号替换为空格防 CSV 断列）
+    # 数据行末两列追加节点备注名和 passwall section ID（与多 worker 合并段一致；
+    # ID 是稳定主键，改 remarks 不会让复测/DDNS 认丢节点）
     local _nm2="${NODE_TEST_NODE}"
     _nm2="$(uci -q get "passwall.${NODE_TEST_NODE}.remarks" 2>/dev/null)"; _nm2="${_nm2//,/ }"; _nm2="${_nm2:-${NODE_TEST_NODE}}"
-    awk -F, -v n="$_nm2" 'NR==1 {print $0 ",节点"; next} NF>=7 && $1!="" && $1 !~ /^#/ {print $0 "," n}' \
+    awk -F, -v n="$_nm2" -v id="${NODE_TEST_NODE}" \
+        'NR==1 {print $0 ",节点,节点ID"; next} NF>=7 && $1!="" && $1 !~ /^#/ {print $0 "," n "," id}' \
         "$result_tmp" > "${result_tmp}.nn" 2>/dev/null \
         && [ -s "${result_tmp}.nn" ] && mv -f "${result_tmp}.nn" "$result_tmp"
 

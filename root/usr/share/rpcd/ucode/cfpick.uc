@@ -282,9 +282,10 @@ function remarks_map() {
 }
 
 // 解析一次运行的结果文件：全局最优（首条数据行）+ 各节点自己的最优
-// （result.csv 全局延迟升序，某节点末列值首次出现的行即该节点最优）。
-// 节点不在 worker 配置内（如被移除/改名）时 idx 为 null，前端按节点名独立展示不连线。
-function parse_run_file(path, idx_of_remarks) {
+// （result.csv 全局延迟升序，某节点首条出现的行即该节点最优）。
+// 节点 ID（passwall section id）是稳定主键：优先用它连线和去重，remarks
+// 只做展示；旧格式没有 ID 列时退回按节点名匹配。
+function parse_run_file(path, idx_of_remarks, idx_of_ids) {
 	let lines = read_lines(path);
 	let time = null;
 	let best = null;
@@ -318,17 +319,21 @@ function parse_run_file(path, idx_of_remarks) {
 		if (length(parts) < 7)
 			continue;
 
-		// 8 列 = ...,地区码,节点；7 列 = 旧格式无节点列，末列即地区码
-		let node = (length(parts) >= 8) ? parts[length(parts) - 1] : '';
+		// 9 列 = ...,地区码,节点,节点ID；8 列 = 旧格式有节点无 ID；7 列 = 无节点列
+		let node = (length(parts) >= 8) ? parts[7] : '';
+		let node_id = (length(parts) >= 9) ? parts[8] : '';
+		let key = (node_id != '') ? node_id : node;
 
 		if (!best)
 			best = { ip: parts[0], latency: +parts[4] || 0, speed: +parts[5] || 0, region: parts[6] };
 
-		if (node != '' && !seen[node]) {
-			seen[node] = true;
+		if (node != '' && !seen[key]) {
+			seen[key] = true;
 			push(nodes, {
 				node: node,
-				idx: (idx_of_remarks[node] != null) ? idx_of_remarks[node] : null,
+				node_id: node_id,
+				idx: (node_id != '' && idx_of_ids[node_id] != null) ? idx_of_ids[node_id] :
+					((idx_of_remarks[node] != null) ? idx_of_remarks[node] : null),
 				ip: parts[0],
 				latency: +parts[4] || 0,
 				speed: +parts[5] || 0,
@@ -353,7 +358,7 @@ function parse_run_file(path, idx_of_remarks) {
 // 解析持久历史文件（/etc/cfpick/history.csv）：多个
 // "# Speed test time: ..." 块，每块数据行 = 该次各节点最优（全局延迟升序去重首现）。
 // 修剪可能产生无时间头的孤立数据行，直接忽略（cur 为空时跳过）。
-function parse_history_file(path, idx_of_remarks) {
+function parse_history_file(path, idx_of_remarks, idx_of_ids) {
 	let lines = read_lines(path);
 	let runs = [];
 	let cur = null;
@@ -383,16 +388,20 @@ function parse_history_file(path, idx_of_remarks) {
 		if (length(parts) < 7)
 			continue;
 
-		let node = (length(parts) >= 8) ? parts[length(parts) - 1] : '';
+		let node = (length(parts) >= 8) ? parts[7] : '';
+		let node_id = (length(parts) >= 9) ? parts[8] : '';
+		let key = (node_id != '') ? node_id : node;
 
 		if (!cur.best)
 			cur.best = { ip: parts[0], latency: +parts[4] || 0, speed: +parts[5] || 0, region: parts[6] };
 
-		if (node != '' && !cur.seen[node]) {
-			cur.seen[node] = true;
+		if (node != '' && !cur.seen[key]) {
+			cur.seen[key] = true;
 			push(cur.nodes, {
 				node: node,
-				idx: (idx_of_remarks[node] != null) ? idx_of_remarks[node] : null,
+				node_id: node_id,
+				idx: (node_id != '' && idx_of_ids[node_id] != null) ? idx_of_ids[node_id] :
+					((idx_of_remarks[node] != null) ? idx_of_remarks[node] : null),
 				ip: parts[0],
 				latency: +parts[4] || 0,
 				speed: +parts[5] || 0,
@@ -423,27 +432,30 @@ function parse_history_file(path, idx_of_remarks) {
 function get_history() {
 	let history = [];
 	let idx_of_remarks = {};
+	let idx_of_ids = {};
 	let workers = worker_ids();
 	let remarks = remarks_map();
 
 	for (let i = 0; i < length(workers); i++) {
 		let r = remarks[workers[i]];
 
+		idx_of_ids[workers[i]] = i + 1;
+
 		if (r != null && idx_of_remarks[r] == null)
 			idx_of_remarks[r] = i + 1;
 	}
 
 	// 持久历史为主（/etc 下，重启与轮转不清）；尚无归档时回退 /tmp 轮转文件（老安装）
-	history = parse_history_file(HISTORY_FILE, idx_of_remarks);
+	history = parse_history_file(HISTORY_FILE, idx_of_remarks, idx_of_ids);
 
 	if (!length(history)) {
-		let item = parse_run_file(RESULT_FILE, idx_of_remarks);
+		let item = parse_run_file(RESULT_FILE, idx_of_remarks, idx_of_ids);
 
 		if (item)
 			push(history, item);
 
 		for (let i = 1; i <= 9; i++) {
-			item = parse_run_file(RESULT_FILE + '.' + i, idx_of_remarks);
+			item = parse_run_file(RESULT_FILE + '.' + i, idx_of_remarks, idx_of_ids);
 
 			if (item)
 				push(history, item);
@@ -460,14 +472,16 @@ function get_history() {
 function get_best_result() {
 	let lines = read_lines(RESULT_FILE);
 	// 按节点独立排序展示：result.csv 本身保持全局排序（有下载实测速度时按吞吐降序，
-	// 否则按延迟升序；DNS 取全局最优/前 N 依赖首行序），此处在展示层按末列节点分组——
+	// 否则按延迟升序；DNS 取全局最优/前 N 依赖首行序），此处在展示层按节点分组——
 	// 全局序里同一节点的行仍保序，每组首行即该节点自己的最优 IP。节点顺序 = 其最优 IP
-	// 在全局排序中首次出现的顺序。
+	// 在全局排序中首次出现的顺序。分组键优先用稳定的 passwall section ID，
+	// 没有 ID 列的旧结果退回节点名。
 	// 全量展示（日志的「其余 N 条见最佳 IP 表」指向这里），不再截尾 500 行。
 	let header = '';
 	let time_line = '';
 	let order = [];
 	let rows = {};
+	let labels = {};
 
 	for (let i = 0; i < length(lines); i++) {
 		let line = trim(lines[i] != null ? lines[i] : '');
@@ -488,14 +502,17 @@ function get_best_result() {
 		}
 
 		let parts = split(line, ',');
-		let node = (length(parts) > 0) ? parts[length(parts) - 1] : '';
+		let node = (length(parts) >= 8) ? parts[7] : '';
+		let node_id = (length(parts) >= 9) ? parts[8] : '';
+		let key = (node_id != '') ? node_id : node;
 
-		if (!rows[node]) {
-			rows[node] = [];
-			push(order, node);
+		if (!rows[key]) {
+			rows[key] = [];
+			labels[key] = node;
+			push(order, key);
 		}
 
-		push(rows[node], line);
+		push(rows[key], line);
 	}
 
 	let out = [];
@@ -506,10 +523,11 @@ function get_best_result() {
 	for (let i = 0; i < length(order); i++) {
 		let node_rows = rows[order[i]];
 		let best = (length(node_rows) > 0) ? split(node_rows[0], ',') : [];
+		let label = labels[order[i]] || order[i];
 
 		let best_speed = +best[5] || 0;
 
-		push(out, '# ── ' + (order[i] != '' ? order[i] : '(无节点)') +
+		push(out, '# ── ' + (label != '' ? label : '(无节点)') +
 			'：最优 ' + (best[0] || '-') + ' / ' + (best[4] || '-') + 'ms' +
 			(best_speed > 0 ? (' / ' + best[5] + ' MB/s') : '') +
 			'，共 ' + length(node_rows) + ' 条 ──');
@@ -658,10 +676,10 @@ function best_per_node(rows) {
 	let seen = {};
 
 	for (let i = 0; i < length(rows); i++) {
-		let node = rows[i].node;
+		let key = (rows[i].node_id != null && rows[i].node_id != '') ? rows[i].node_id : rows[i].node;
 
-		if (!seen[node]) {
-			seen[node] = true;
+		if (!seen[key]) {
+			seen[key] = true;
 			push(out, rows[i]);
 		}
 	}
@@ -694,7 +712,8 @@ function parse_result_row(line) {
 		latency: to_number(parts[4], 0),
 		speed: to_number(parts[5], 0),
 		region: parts[6],
-		node: (length(parts) > 7) ? parts[7] : ''
+		node: (length(parts) > 7) ? parts[7] : '',
+		node_id: (length(parts) > 8) ? parts[8] : ''
 	};
 }
 

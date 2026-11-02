@@ -306,7 +306,7 @@ cfpick serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 
 | 路径 | 内容 |
 | --- | --- |
-| `/var/lib/cfpick/result.csv` | 当前结果；表头 `IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区码,节点`，末尾 `# Speed test time:` |
+| `/var/lib/cfpick/result.csv` | 当前结果；表头 `IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区码,节点,节点ID`，末尾 `# Speed test time:` |
 | `/var/lib/cfpick/result.csv.1` … `.9` | 最近 10 次结果滚动 |
 | `/var/lib/cfpick/result.json` | 本次结果的结构化导出（`generated_at` / `best` / `nodes` / `rows` 全量） |
 | `/var/lib/cfpick/best.json` | 精简的最优导出（`generated_at` / `best` / 各节点最优 `nodes`，不含全量 rows） |

@@ -196,6 +196,7 @@ def cmd_ddns_uci_apply(args):
     cfg = {"ddns": settings}
     node_list = [{
         "name": item["name"],
+        "node_id": item["node"],
         "ddns_domain": item["domain"],
         "enabled": True,
     } for item in nodes]
