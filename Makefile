@@ -21,12 +21,12 @@ define Package/$(PKG_NAME)/conffiles
 /etc/config/passwall-speedtest
 endef
 
-include $(TOPDIR)/feeds/luci/luci.mk
-
 # The standalone engine is maintained once in debian/ (the Debian/Ubuntu
-# implementation) and copied into the package tree at build time.  luci.mk
-# calls Build/Prepare/$(LUCI_NAME) after copying ./root, so this hook only
-# has to add the files; no duplication in git.
+# implementation) and copied into the package tree at build time; nothing is
+# duplicated in git.  These hooks MUST be defined before including luci.mk:
+# BuildPackage expands `$(call Build/Prepare/$(LUCI_NAME))` while luci.mk is
+# being included, so a hook defined after it is silently ignored (the package
+# then builds without /usr/lib/cf-speedtest).
 define StandaloneEnginePrepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/root/usr/lib/cf-speedtest
 	$(CP) -R $(CURDIR)/debian/cfspeedtest $(PKG_BUILD_DIR)/root/usr/lib/cf-speedtest/
@@ -43,5 +43,7 @@ endef
 define Build/Prepare/$(notdir $(CURDIR))
 $(StandaloneEnginePrepare)
 endef
+
+include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature

@@ -79,6 +79,15 @@ jobs:
           zstd -d /tmp/SNAPSDK.tar.zst
           tar xf /tmp/SNAPSDK.tar --strip-components=1 -C /tmp/SNAPSDK
 
+      # The package Makefile copies debian/ into PKG_BUILD_DIR via a
+      # Build/Prepare hook.  Stage it into ./root as well: this keeps the
+      # package correct even if an older luci.mk does not expand the hook,
+      # and makes the artifact verification below meaningful.
+      - name: Stage standalone engine
+        run: |
+          mkdir -p root/usr/lib/cf-speedtest
+          cp -R debian/cfspeedtest debian/web debian/data root/usr/lib/cf-speedtest/
+
       - name: Copy source into SDKs
         run: |
           mkdir -p /tmp/SDK/package/${PKG}
@@ -110,6 +119,20 @@ jobs:
           cp /tmp/SDK/bin/packages/x86_64/base/luci-*_all.ipk "./artifacts/"
           cp /tmp/SNAPSDK/bin/packages/x86_64/base/luci-*.apk "./artifacts/"
           echo "v${{ steps.get_version.outputs.version }}" > artifacts/version.txt
+
+      - name: Verify standalone engine is packaged
+        run: |
+          ipk=$(ls artifacts/*.ipk | head -n1)
+          [ -n "$ipk" ] || { echo "no ipk produced"; exit 1; }
+          rm -rf /tmp/ipkcheck && mkdir -p /tmp/ipkcheck
+          tar xzf "$ipk" -C /tmp/ipkcheck ./data.tar.gz
+          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./usr/lib/cf-speedtest/cfspeedtest/engine.py$' \
+            || { echo "standalone engine missing from $ipk"; exit 1; }
+          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./usr/bin/cfst$' \
+            || { echo "cfst wrapper missing from $ipk"; exit 1; }
+          tar tzf /tmp/ipkcheck/data.tar.gz | grep -q '^\./www/cfst/cgi-bin/api$' \
+            || { echo "console CGI missing from $ipk"; exit 1; }
+          echo "standalone engine present in $ipk"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
