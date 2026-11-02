@@ -740,6 +740,10 @@
 
 	function collectConfig() {
 		const cron = validateCron();
+		const stableNode = textValue('cfg-stable-node');
+
+		if (!stableNode)
+			throw new Error('请选择稳定节点（测速期间用于承载实流量）');
 
 		return {
 			global: {
@@ -766,7 +770,7 @@
 				custom_cron: cron,
 				hour: 24,
 				node_test_node: textValue('cfg-test-node'),
-				stable_node: textValue('cfg-stable-node')
+				stable_node: stableNode
 			},
 			ip_lists: state.ipLists.slice(0, 5).map((item) => ({
 				enabled: !!item.enabled,

@@ -646,7 +646,7 @@ return view.extend({
 			const port = (input && input.value) || '17544';
 			const host = window.location.hostname.indexOf(':') >= 0
 				? '[' + window.location.hostname + ']' : window.location.hostname;
-			window.open(window.location.protocol + '//' + host + ':' + port + '/', '_blank');
+			window.open('http://' + host + ':' + port + '/', '_blank');
 		};
 
 		// ── 五个 CM 备选 IP 列表（共享 ip_online_url，仅国家/端口筛选不同）──
