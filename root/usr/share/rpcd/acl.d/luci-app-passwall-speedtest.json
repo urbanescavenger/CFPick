@@ -16,6 +16,7 @@
 				"passwall-speedtest": [
 					"start", "start_retest", "stop",
 					"api_run_start", "api_run_retest", "api_run_stop",
+					"api_task_save", "api_task_delete", "api_task_add",
 					"api_web_reset"
 				]
 			},

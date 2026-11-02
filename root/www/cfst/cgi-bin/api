@@ -774,6 +774,35 @@ function dispatch(req) {
 	else if (action == 'tasks') {
 		send(req, ubus_call('api_tasks', {}));
 	}
+	else if (action == 'task_save' && method == 'POST') {
+		let body = body_json() || {};
+		let enabled = (body.enabled === true || body.enabled === 1 ||
+			body.enabled == '1') ? '1' : '0';
+
+		send(req, ubus_call('api_task_save', {
+			source: clean_text(body.source, 64),
+			line: clean_text(body.line, 1024),
+			schedule: clean_text(body.schedule, 128),
+			enabled: enabled
+		}));
+	}
+	else if (action == 'task_delete' && method == 'POST') {
+		let body = body_json() || {};
+
+		send(req, ubus_call('api_task_delete', {
+			source: clean_text(body.source, 64),
+			line: clean_text(body.line, 1024)
+		}));
+	}
+	else if (action == 'task_add' && method == 'POST') {
+		let body = body_json() || {};
+
+		send(req, ubus_call('api_task_add', {
+			source: clean_text(body.source, 64),
+			schedule: clean_text(body.schedule, 128),
+			command: clean_text(body.command, 512)
+		}));
+	}
 	else if (action == 'nodes') {
 		send(req, ubus_call('api_nodes', {}));
 	}
@@ -796,6 +825,15 @@ function dispatch(req) {
 	else if (action == 'standalone_update_core' && method == 'POST') {
 		let body = body_json() || {};
 		let type = (body.type == 'mihomo' || body.type == 'xray') ? body.type : 'all';
+		let tag = clean_text(body.tag, 64);
+
+		// The tag ends up in a shell command line, so only allow the characters
+		// GitHub release tags actually use.
+		if (tag != '' && !match(tag, /^[A-Za-z0-9._-]+$/)) {
+			send(req, fail('版本标签只能包含字母、数字、点、下划线和短横线'), '400 Bad Request');
+			return;
+		}
+
 		let pid = trim(fs.readfile('/tmp/cfst-core-update.pid') || '');
 		let busy = (match(pid, /^[0-9]+$/) &&
 			system('kill -0 ' + pid + ' 2>/dev/null') == 0) ? true : false;
@@ -806,10 +844,12 @@ function dispatch(req) {
 		else {
 			// ucode's system() runs through the shell: background the download
 			// and remember its PID so the status action can show progress.
-			system("nohup /usr/bin/cfst update-core --type " + type +
+			system("printf '%s' " + shquote(type) + " >/tmp/cfst-core-update.type; " +
+				"nohup /usr/bin/cfst update-core --type " + type +
+				(tag != '' ? ' --tag ' + shquote(tag) : '') +
 				" >/tmp/cfst-core-update.log 2>&1 & " +
 				"echo $! >/tmp/cfst-core-update.pid");
-			send(req, ok({ started: true, type: type }));
+			send(req, ok({ started: true, type: type, tag: tag }));
 		}
 	}
 	else if (action == 'standalone_save' && method == 'POST') {

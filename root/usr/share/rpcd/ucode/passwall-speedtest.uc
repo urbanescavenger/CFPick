@@ -873,71 +873,357 @@ function split_ws(line) {
 	return out;
 }
 
-function cron_entries(text, source) {
-	let out = [];
-	let lines = split(replace(text || '', /\r/g, ''), '\n');
+const CRON_FILES = [ '/etc/crontabs/root', '/etc/crontab' ];
+// Only root's crontab is rewritten directly.  /etc/crontab has a user column
+// between the schedule and the command, so parsing/editing it here could
+// produce a wrong line; it stays read-only in the panel.
+const CRON_WRITABLE = '/etc/crontabs/root';
+// Marker for a task disabled from the console.  The original schedule and
+// command stay on the line, so the panel can show and re-enable it.
+const CRON_DISABLED_PREFIX = '# [cfst-disabled] ';
 
-	for (let i = 0; i < length(lines); i++) {
-		let line = trim(lines[i] != null ? lines[i] : '');
+// A task belongs to this plugin when its command references the run script,
+// one of its helper scripts (aliddns.sh, astra-dns.sh) or the standalone
+// `cfst` binary.  Hand-written lines (retest/replace, helper scripts) are
+// picked up too, not just the one line init.d maintains.
+function cron_related(command) {
+	return index(command, 'passwall-speedtest') >= 0 ||
+		index(command, '/usr/bin/cfst') >= 0 ||
+		index(command, 'cf-speedtest') >= 0;
+}
 
-		if (line == '' || substr(line, 0, 1) == '#')
-			continue;
+function cron_valid_schedule(schedule) {
+	if (match(schedule, /^@(reboot|hourly|daily|weekly|monthly|yearly|annually|midnight)$/))
+		return true;
 
-		if (match(line, /^[A-Za-z_][A-Za-z0-9_]*=/))
-			continue;
+	let parts = split_ws(schedule);
 
-		let parts = split_ws(line);
+	if (length(parts) != 5)
+		return false;
 
-		if (length(parts) < 6)
-			continue;
+	for (let i = 0; i < length(parts); i++)
+		if (!match(parts[i], /^[0-9A-Za-z*,\/-]+$/))
+			return false;
 
-		let schedule = parts[0] + ' ' + parts[1] + ' ' + parts[2] + ' ' +
-			parts[3] + ' ' + parts[4];
-		let command = '';
+	return true;
+}
 
-		for (let j = 5; j < length(parts); j++) {
-			if (j > 5)
-				command += ' ';
+function cron_normalize_schedule(value) {
+	return join(' ', split_ws(trim('' + (value ?? ''))));
+}
 
-			command += parts[j];
-		}
+// Return the part of a crontab line after the first `count` whitespace-separated
+// fields, byte-for-byte.  Keeping the original command text means a schedule
+// edit never rewrites quoting or redirections inside the command.
+function cron_command_suffix(line, count) {
+	let i = 0;
+	let size = length(line);
 
-		push(out, {
-			source: source,
-			schedule: schedule,
-			command: command,
-			line: line,
-			managed: index(command, 'passwall-speedtest.sh') >= 0
-		});
+	for (let n = 0; n < count; n++) {
+		while (i < size && (substr(line, i, 1) == ' ' || substr(line, i, 1) == '\t'))
+			i++;
+
+		while (i < size && substr(line, i, 1) != ' ' && substr(line, i, 1) != '\t')
+			i++;
 	}
 
-	return out;
+	while (i < size && (substr(line, i, 1) == ' ' || substr(line, i, 1) == '\t'))
+		i++;
+
+	return substr(line, i);
+}
+
+// Parse one crontab line into the panel's task model.  Ordinary comments and
+// environment assignments return null; a line carrying the disabled marker is
+// returned with disabled=true and its raw line preserved for later matching.
+function cron_parse_line(raw, source, index) {
+	let line = trim(raw != null ? raw : '');
+
+	if (line == '')
+		return null;
+
+	let disabled = false;
+
+	if (substr(line, 0, length(CRON_DISABLED_PREFIX)) == CRON_DISABLED_PREFIX) {
+		disabled = true;
+		line = trim(substr(line, length(CRON_DISABLED_PREFIX)));
+	}
+	else if (substr(line, 0, 1) == '#') {
+		return null;
+	}
+
+	if (match(line, /^[A-Za-z_][A-Za-z0-9_]*=/))
+		return null;
+
+	let parts = split_ws(line);
+	let schedule;
+	let command;
+
+	if (length(parts) > 0 && substr(parts[0], 0, 1) == '@') {
+		schedule = parts[0];
+		command = cron_command_suffix(line, 1);
+	}
+	else if (length(parts) >= 6) {
+		schedule = parts[0] + ' ' + parts[1] + ' ' + parts[2] + ' ' +
+			parts[3] + ' ' + parts[4];
+		command = cron_command_suffix(line, 5);
+	}
+	else {
+		return null;
+	}
+
+	if (command == '')
+		return null;
+
+	return {
+		id: source + '#' + index,
+		source: source,
+		schedule: schedule,
+		command: command,
+		line: disabled ? CRON_DISABLED_PREFIX + line : line,
+		related: cron_related(command),
+		managed: command == RUN_SCRIPT + ' start',
+		disabled: disabled,
+		writable: source == CRON_WRITABLE
+	};
+}
+
+function cron_file_lines(path) {
+	if (!fs.access(path, 'f'))
+		return [];
+
+	return split(replace(read_file(path), /\r/g, ''), '\n');
+}
+
+// Atomic replace: write a sibling temp file, fix its mode (crontabs/root is
+// 0600), then rename.  A half-written crontab would silently drop every task.
+function cron_write_lines(path, lines) {
+	let count = length(lines);
+
+	while (count > 0 && trim(lines[count - 1]) == '')
+		count--;
+
+	let content = '';
+
+	for (let i = 0; i < count; i++)
+		content += lines[i] + '\n';
+
+	let tmp = path + '.cfst-tmp';
+	let fd = fs.open(tmp, 'w');
+
+	if (!fd)
+		return false;
+
+	fd.write(content);
+	fd.close();
+
+	let rc = system('chmod 600 ' + shquote(tmp) + ' && mv -f ' + shquote(tmp) + ' ' + shquote(path));
+
+	if (rc != 0) {
+		try { fs.unlink(tmp); } catch (e) {}
+		return false;
+	}
+
+	return true;
+}
+
+function cron_find_line(lines, target) {
+	target = trim(target);
+
+	for (let i = 0; i < length(lines); i++)
+		if (trim(lines[i]) == target)
+			return i;
+
+	return -1;
 }
 
 function api_tasks_data() {
 	let sources = [];
 	let entries = [];
-	let managed = { enabled: false, line: '' };
-	let files = [ '/etc/crontabs/root', '/etc/crontab' ];
+	let managed = { enabled: false, line: '', schedule: '' };
 
-	for (let i = 0; i < length(files); i++) {
-		let path = files[i];
+	for (let i = 0; i < length(CRON_FILES); i++) {
+		let path = CRON_FILES[i];
 		let exists = fs.access(path, 'f') ? true : false;
-		let parsed = exists ? cron_entries(read_file(path), path) : [];
+		let lines = exists ? cron_file_lines(path) : [];
+		let parsed = [];
 
-		push(sources, { source: path, exists: exists, entries: parsed });
+		for (let j = 0; j < length(lines); j++) {
+			let entry = cron_parse_line(lines[j], path, j);
 
-		for (let j = 0; j < length(parsed); j++) {
-			push(entries, parsed[j]);
+			// The console is a passwall-speedtest panel, not a general crontab
+			// editor: only lines addressing this plugin are surfaced.
+			if (entry == null || !entry.related)
+				continue;
 
-			if (parsed[j].managed && !managed.enabled) {
-				managed.enabled = true;
-				managed.line = parsed[j].line;
+			push(parsed, entry);
+			push(entries, entry);
+
+			if (entry.managed && !managed.enabled) {
+				managed.enabled = !entry.disabled;
+				managed.line = entry.line;
+				managed.schedule = entry.schedule;
 			}
 		}
+
+		push(sources, { source: path, exists: exists, entries: parsed });
 	}
 
-	return { managed: managed, sources: sources, entries: entries };
+	return {
+		managed: managed,
+		sources: sources,
+		entries: entries,
+		run_script: RUN_SCRIPT,
+		writable: CRON_WRITABLE
+	};
+}
+
+// The canonical "start" line is owned by init.d: it is generated from UCI on
+// every reload/save.  Edits to it must go through UCI, or the next settings
+// save would silently restore the old schedule.
+function cron_managed_save(schedule, enabled) {
+	let cur = uci.cursor();
+
+	cur.load('passwall-speedtest');
+	cur.set('passwall-speedtest', 'global', 'enabled', enabled ? '1' : '0');
+	cur.set('passwall-speedtest', 'global', 'custom_cron_enabled', '1');
+	cur.set('passwall-speedtest', 'global', 'custom_cron', schedule);
+	cur.commit('passwall-speedtest');
+	system('/etc/init.d/passwall-speedtest reload >/dev/null 2>&1');
+}
+
+function cron_task_source(args) {
+	let source = trim('' + ((args && args.source) ?? ''));
+
+	return source == CRON_WRITABLE ? source : '';
+}
+
+function cron_task_entry(req) {
+	let args = (req && req.args) || {};
+	let source = cron_task_source(args);
+	let line = trim('' + (args.line ?? ''));
+
+	if (source == '')
+		die('只能修改 /etc/crontabs/root 中的任务');
+
+	if (line == '')
+		die('缺少任务行');
+
+	let lines = cron_file_lines(source);
+	let index = cron_find_line(lines, line);
+
+	if (index < 0)
+		die('任务已被修改，请刷新后重试');
+
+	let entry = cron_parse_line(lines[index], source, index);
+
+	if (entry == null || !entry.related)
+		die('只能修改本插件相关的任务');
+
+	return { args: args, source: source, lines: lines, index: index, entry: entry };
+}
+
+function api_task_save_data(req) {
+	let task = cron_task_entry(req);
+	let schedule = cron_normalize_schedule(task.args.schedule);
+	let enabled = ('' + (task.args.enabled ?? '1')) != '0';
+
+	if (!cron_valid_schedule(schedule))
+		die('计划必须是合法的五段 cron 表达式或 @reboot 等简写');
+
+	if (task.entry.managed) {
+		cron_managed_save(schedule, enabled);
+	}
+	else {
+		let line = schedule + ' ' + task.entry.command;
+
+		if (!enabled)
+			line = CRON_DISABLED_PREFIX + line;
+
+		task.lines[task.index] = line;
+
+		if (!cron_write_lines(task.source, task.lines))
+			die('写入 crontab 失败');
+
+		system('/etc/init.d/cron restart >/dev/null 2>&1');
+	}
+
+	return api_tasks_data();
+}
+
+function api_task_delete_data(req) {
+	let task = cron_task_entry(req);
+
+	if (task.entry.managed) {
+		cron_managed_save(task.entry.schedule, false);
+	}
+	else {
+		let kept = [];
+
+		for (let i = 0; i < length(task.lines); i++)
+			if (i != task.index)
+				push(kept, task.lines[i]);
+
+		if (!cron_write_lines(task.source, kept))
+			die('写入 crontab 失败');
+
+		system('/etc/init.d/cron restart >/dev/null 2>&1');
+	}
+
+	return api_tasks_data();
+}
+
+function api_task_add_data(req) {
+	let args = (req && req.args) || {};
+	let source = trim('' + (args.source ?? '')) || CRON_WRITABLE;
+	let schedule = cron_normalize_schedule(args.schedule);
+	let command = replace(trim('' + (args.command ?? '')), /[\r\n]+/g, ' ');
+
+	if (source != CRON_WRITABLE)
+		die('只能写入 /etc/crontabs/root');
+
+	if (!cron_valid_schedule(schedule))
+		die('计划必须是合法的五段 cron 表达式或 @reboot 等简写');
+
+	if (command == '' || length(command) > 512)
+		die('命令无效');
+
+	if (!cron_related(command))
+		die('只能添加本插件相关的命令');
+
+	let line = schedule + ' ' + command;
+
+	// Adding the canonical start line directly would duplicate the one init.d
+	// generates, so enable the UCI schedule instead.
+	if (command == RUN_SCRIPT + ' start') {
+		cron_managed_save(schedule, true);
+	}
+	else {
+		let lines = cron_file_lines(source);
+		let kept = [];
+		let count = length(lines);
+
+		// Drop the trailing empty element produced by the file's final newline
+		// before appending, otherwise every add leaves a blank separator line.
+		while (count > 0 && trim(lines[count - 1]) == '')
+			count--;
+
+		for (let i = 0; i < count; i++) {
+			if (trim(lines[i]) == line)
+				die('相同任务已存在');
+
+			push(kept, lines[i]);
+		}
+
+		push(kept, line);
+
+		if (!cron_write_lines(source, kept))
+			die('写入 crontab 失败');
+
+		system('/etc/init.d/cron restart >/dev/null 2>&1');
+	}
+
+	return api_tasks_data();
 }
 
 // Called from LuCI's minimal Settings page: forget the console password and
@@ -965,6 +1251,7 @@ function api_web_reset_data() {
 const STANDALONE_BIN = '/usr/bin/cfst';
 const STANDALONE_LOG = '/tmp/cfst-core-update.log';
 const STANDALONE_PID = '/tmp/cfst-core-update.pid';
+const STANDALONE_TYPE_FILE = '/tmp/cfst-core-update.type';
 const STANDALONE_UCI = 'passwall-speedtest';
 
 function standalone_settings() {
@@ -1000,6 +1287,8 @@ function standalone_status() {
 	let settings = standalone_settings();
 	let cores = standalone_cores();
 	let log = read_file(STANDALONE_LOG);
+	let updating = standalone_updating();
+	let updating_type = updating ? trim(read_file(STANDALONE_TYPE_FILE) || '') : '';
 
 	if (length(log) > 4000)
 		log = substr(log, length(log) - 4000);
@@ -1008,7 +1297,10 @@ function standalone_status() {
 		enabled: settings.enabled,
 		core: settings.core,
 		cores: cores,
-		updating: standalone_updating(),
+		updating: updating,
+		// Lets the card show "更新中…" on the right core while the other
+		// card stays actionable after the update finishes.
+		updating_type: (updating_type == 'mihomo' || updating_type == 'xray') ? updating_type : '',
 		update_log: log
 	};
 }
@@ -1098,6 +1390,21 @@ return {
 		api_tasks: api(function() {
 			return api_tasks_data();
 		}),
+
+		// Configure tasks owned by this plugin.  The panel only allows editing
+		// lines it recognised as related, so arbitrary crontab commands cannot
+		// be introduced through these methods.
+		api_task_save: api(function(req) {
+			return api_task_save_data(req);
+		}, { source: '', line: '', schedule: '', enabled: '' }),
+
+		api_task_delete: api(function(req) {
+			return api_task_delete_data(req);
+		}, { source: '', line: '' }),
+
+		api_task_add: api(function(req) {
+			return api_task_add_data(req);
+		}, { source: '', schedule: '', command: '' }),
 
 		api_web_reset: api(function() {
 			return api_web_reset_data();

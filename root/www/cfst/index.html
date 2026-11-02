@@ -110,74 +110,68 @@
 
       <div class="card">
         <div class="card-head"><h2>定时任务</h2></div>
+        <p class="muted">只显示与 passwall-speedtest 相关的 crontab 任务，可直接修改计划、启用/停用或删除。</p>
         <div class="table-wrap">
           <table class="data">
-            <thead><tr><th>来源</th><th>计划</th><th>命令</th><th>归属</th></tr></thead>
-            <tbody id="task-body"><tr><td colspan="4" class="empty">加载中…</td></tr></tbody>
+            <thead><tr><th>启用</th><th>计划</th><th>命令</th><th>来源</th><th>操作</th></tr></thead>
+            <tbody id="task-body"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
           </table>
         </div>
+        <div class="grid task-add">
+          <label>计划（分 时 日 月 星期） <input id="task-add-schedule" type="text" class="mono" placeholder="0 3 * * *" spellcheck="false"></label>
+          <label>任务
+            <select id="task-add-mode">
+              <option value="retest">复测现有最优并写回（retest）</option>
+              <option value="test">仅测速，不写回（test）</option>
+              <option value="replace">仅写回现有结果（replace）</option>
+              <option value="start">完整测速并写回（start，会修改主任务）</option>
+            </select>
+          </label>
+          <label>&nbsp;<button id="btn-task-add" type="button" class="btn primary">添加任务</button></label>
+        </div>
+        <p class="muted">「start」是设置页维护的主定时任务，在此修改会同步到设置；其他任务直接写入 crontab。</p>
       </div>
     </section>
 
     <!-- ── 独立测速 ─────────────────────────────────────────────── -->
     <section id="pane-standalone" class="pane">
-      <div class="cards">
-        <div class="card stat">
-          <span class="label">测速内核模式</span>
-          <strong id="sa-mode">—</strong>
-          <span id="sa-mode-sub" class="sub">—</span>
-        </div>
-        <div class="card stat">
-          <span class="label">当前内核</span>
-          <strong id="sa-core">—</strong>
-          <span id="sa-core-sub" class="sub mono">—</span>
-        </div>
-        <div class="card stat">
-          <span class="label">mihomo</span>
-          <strong id="sa-mihomo">—</strong>
-          <span id="sa-mihomo-sub" class="sub mono">—</span>
-        </div>
-        <div class="card stat">
-          <span class="label">Xray-core</span>
-          <strong id="sa-xray">—</strong>
-          <span id="sa-xray-sub" class="sub mono">—</span>
-        </div>
-      </div>
-
       <div class="card">
         <div class="card-head">
-          <h2>独立测速（统一测速使用本机内核）</h2>
+          <h2>内核模块</h2>
           <div class="card-actions">
-            <button id="btn-sa-save" type="button" class="btn small primary">保存</button>
             <button id="btn-sa-refresh" type="button" class="btn small">刷新</button>
+            <button id="btn-sa-save" type="button" class="btn small primary">保存内核设置</button>
           </div>
         </div>
-        <div class="grid three">
-          <label class="check span2"><input id="sa-enabled" type="checkbox"> 启用独立内核
-            <span class="muted">（启用后「开始测速」走 mihomo / Xray；关闭则依赖 PassWall run_socks）</span>
+        <div class="grid">
+          <label class="check"><input id="sa-enabled" type="checkbox"> 启用独立内核
+            <span class="muted">（启用后「开始测速」走本机内核；关闭则依赖 PassWall run_socks）</span>
           </label>
-          <label>使用的内核
+          <label>当前使用的内核
             <select id="sa-core-select">
+              <option value="mihomo">mihomo（Clash.Meta）</option>
               <option value="xray">Xray-core</option>
-              <option value="mihomo">mihomo (Clash.Meta)</option>
             </select>
           </label>
         </div>
         <p class="muted">
+          两个内核都是独立模块，可分别安装/升级，升级互不影响，也不会中断正在运行的测速（下一次运行生效）。
+          节点兼容性：mihomo 支持 vless / vmess / trojan / ss / hysteria2 及 tcp / ws / grpc /
+          h2 / http 传输，xhttp 目前仅 VLESS；xray 支持 vless / vmess / trojan / ss
+          （SS 不支持 plugin）及 tcp / ws / grpc / xhttp 传输，不支持 hysteria2
+          （Xray 26 也已移除 h2/http 传输）。VMess/Trojan 的 xhttp 节点请选 Xray。
+        </p>
+        <p class="muted">
           独立模式不改写 PassWall 节点 address，也不切换全局节点；节点、IP 列表、探测/下载参数
           仍用本操作台的配置。节点类型与选中内核不兼容时自动回退 PassWall run_socks。
         </p>
+        <p id="sa-update-message" class="muted">—</p>
       </div>
 
+      <div class="cards" id="sa-core-cards"></div>
+
       <div class="card">
-        <div class="card-head">
-          <h2>内核安装 / 升级</h2>
-          <div class="card-actions">
-            <button id="btn-sa-update-mihomo" type="button" class="btn small">安装/升级 mihomo</button>
-            <button id="btn-sa-update-xray" type="button" class="btn small">安装/升级 Xray</button>
-          </div>
-        </div>
-        <p id="sa-update-message" class="muted">—</p>
+        <div class="card-head"><h2>内核更新日志</h2></div>
         <pre id="sa-update-log" class="log-view" style="max-height:180px"></pre>
       </div>
     </section>

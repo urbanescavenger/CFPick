@@ -26,6 +26,7 @@
 		tab: 'overview',
 		status: null,
 		standalone: null,
+		coreTags: {},
 		results: null,
 		history: null,
 		tasks: null,
@@ -383,38 +384,79 @@
 		renderStandalone();
 	}
 
-	function coreText(cores, type) {
-		const info = (cores && cores[type]) || {};
+	const CORE_LABELS = {
+		mihomo: 'mihomo（Clash.Meta）',
+		xray: 'Xray-core'
+	};
 
-		if (!info.installed)
-			return { title: '未安装', sub: '—' };
+	function coreBadge(type, info, selected) {
+		if (type === selected)
+			return el('span', { class: 'badge info' },
+				info.installed ? '当前使用' : '当前使用 · 未安装');
 
-		return {
-			title: '已安装',
-			sub: (info.version || '—') + (info.path ? ' · ' + info.path : '')
-		};
+		if (info.installed)
+			return el('span', { class: 'badge ok' }, '已安装');
+
+		return el('span', { class: 'badge bad' }, '未安装');
+	}
+
+	function renderStandaloneCoreCards(data) {
+		const container = $('#sa-core-cards');
+		if (!container)
+			return;
+
+		// Keep the version tags the user is typing; the card list is rebuilt
+		// after every refresh and while an update is polling.
+		$$('#sa-core-cards input[data-core-tag]').forEach((input) => {
+			state.coreTags[input.dataset.coreTag] = input.value;
+		});
+
+		container.replaceChildren();
+
+		const cores = (data.cores && data.cores.cores) || {};
+		const selected = data.core === 'mihomo' ? 'mihomo' : 'xray';
+		const updating = !!data.updating;
+		const updatingType = data.updating_type || '';
+
+		['mihomo', 'xray'].forEach((type) => {
+			const info = cores[type] || {};
+
+			const tag = el('input', {
+				type: 'text',
+				placeholder: '版本标签，留空 = 最新版',
+				spellcheck: 'false'
+			});
+			tag.dataset.coreTag = type;
+			tag.value = state.coreTags[type] || '';
+			tag.addEventListener('input', () => { state.coreTags[type] = tag.value; });
+
+			const update = el('button', { type: 'button', class: 'btn small primary' },
+				(updating && updatingType === type) ? '更新中…' : (info.installed ? '升级' : '安装'));
+			update.disabled = updating;
+			update.addEventListener('click', () => updateStandaloneCore(type, tag.value.trim()));
+
+			const source = info.managed ? '托管（可自动升级）'
+				: (info.installed ? '系统自带' : '—');
+
+			container.appendChild(el('div', { class: 'card stat core-card' }, [
+				el('div', { class: 'core-card-head' }, [
+					el('h2', {}, CORE_LABELS[type]),
+					coreBadge(type, info, selected)
+				]),
+				el('dl', { class: 'kv' }, [
+					el('dt', {}, '版本'), el('dd', { class: 'mono' }, info.version || '—'),
+					el('dt', {}, '路径'), el('dd', { class: 'mono' }, info.path || '—'),
+					el('dt', {}, '来源'), el('dd', {}, source)
+				]),
+				el('div', { class: 'core-update-row' }, [tag, update])
+			]));
+		});
 	}
 
 	function renderStandalone() {
 		const data = state.standalone || {};
-		const cores = (data.cores && data.cores.cores) || {};
 		const enabled = !!data.enabled;
 		const core = data.core === 'mihomo' ? 'mihomo' : 'xray';
-		const active = coreText(cores, core);
-
-		setText('sa-mode', enabled ? '独立内核' : 'PassWall');
-		setText('sa-mode-sub', enabled
-			? '统一测速走本机 ' + core
-			: '统一测速走 passwall run_socks');
-		setText('sa-core', core);
-		setText('sa-core-sub', active.title + (active.sub !== '—' ? ' · ' + active.sub : ''));
-
-		const mihomo = coreText(cores, 'mihomo');
-		const xray = coreText(cores, 'xray');
-		setText('sa-mihomo', mihomo.title);
-		setText('sa-mihomo-sub', mihomo.sub);
-		setText('sa-xray', xray.title);
-		setText('sa-xray-sub', xray.sub);
 
 		const enable = $('#sa-enabled');
 		if (enable)
@@ -424,9 +466,9 @@
 		if (select)
 			select.value = core;
 
+		renderStandaloneCoreCards(data);
+
 		const updating = !!data.updating;
-		$('#btn-sa-update-mihomo').disabled = updating;
-		$('#btn-sa-update-xray').disabled = updating;
 		setText('sa-update-message', updating ? '内核更新中…' : '—');
 
 		const log = $('#sa-update-log');
@@ -451,11 +493,11 @@
 		}
 	}
 
-	async function updateStandaloneCore(type) {
+	async function updateStandaloneCore(type, tag) {
 		try {
 			const result = await api('standalone_update_core', {
 				method: 'POST',
-				body: { type: type }
+				body: { type: type, tag: tag || '' }
 			});
 
 			if (result && result.busy)
@@ -543,6 +585,75 @@
 		renderTasks();
 	}
 
+	async function saveTask(entry, schedule, enabled) {
+		try {
+			state.tasks = await api('task_save', {
+				method: 'POST',
+				body: {
+					source: entry.source,
+					line: entry.line,
+					schedule: schedule,
+					enabled: enabled
+				}
+			});
+			renderTasks();
+			await refreshStatus();
+			toast(enabled ? '定时任务已保存并启用' : '定时任务已保存并停用');
+		}
+		catch (e) {
+			toast(e.message, true);
+			await refreshTasks().catch(() => {});
+		}
+	}
+
+	async function deleteTask(entry) {
+		if (!confirm('删除定时任务？\n\n' + (entry.schedule || '') + ' ' + (entry.command || '')))
+			return;
+
+		try {
+			state.tasks = await api('task_delete', {
+				method: 'POST',
+				body: { source: entry.source, line: entry.line }
+			});
+			renderTasks();
+			await refreshStatus();
+			toast('定时任务已删除');
+		}
+		catch (e) {
+			toast(e.message, true);
+			await refreshTasks().catch(() => {});
+		}
+	}
+
+	async function addTask() {
+		const schedule = textValue('task-add-schedule');
+		const mode = textValue('task-add-mode') || 'retest';
+		const script = (state.tasks && state.tasks.run_script) ||
+			'/usr/bin/passwall-speedtest/passwall-speedtest.sh';
+
+		if (!schedule) {
+			toast('请填写计划表达式', true);
+			return;
+		}
+
+		try {
+			state.tasks = await api('task_add', {
+				method: 'POST',
+				body: {
+					source: (state.tasks && state.tasks.writable) || '/etc/crontabs/root',
+					schedule: schedule,
+					command: script + ' ' + mode
+				}
+			});
+			renderTasks();
+			await refreshStatus();
+			toast('定时任务已添加');
+		}
+		catch (e) {
+			toast(e.message, true);
+		}
+	}
+
 	function renderTasks() {
 		const body = $('#task-body');
 		const entries = (state.tasks && state.tasks.entries) || [];
@@ -550,16 +661,45 @@
 		body.replaceChildren();
 
 		if (!entries.length) {
-			body.appendChild(el('tr', {}, [el('td', { colspan: '4', class: 'empty' }, '暂无定时任务')]));
+			body.appendChild(el('tr', {}, [el('td', { colspan: '5', class: 'empty' }, '暂无本插件相关的定时任务')]));
 			return;
 		}
 
 		entries.forEach((entry) => {
+			// The list only carries this plugin's lines; /etc/crontab entries
+			// are still shown read-only because that file has a user column.
+			const editable = !!entry.writable;
+
+			const enabled = el('input', { type: 'checkbox', checked: !entry.disabled });
+			enabled.disabled = !editable;
+
+			const schedule = el('input', {
+				type: 'text',
+				class: 'mono',
+				value: entry.schedule || '',
+				spellcheck: 'false'
+			});
+			schedule.disabled = !editable;
+
+			const save = el('button', { type: 'button', class: 'btn small primary' }, '保存');
+			save.disabled = !editable;
+			save.addEventListener('click', () => saveTask(entry, schedule.value.trim(), enabled.checked));
+
+			const remove = el('button', { type: 'button', class: 'btn small danger' }, '删除');
+			remove.disabled = !editable;
+			remove.addEventListener('click', () => deleteTask(entry));
+
+			const badge = entry.managed ? '设置页维护' : '';
+
 			body.appendChild(el('tr', { class: entry.managed ? 'best' : '' }, [
+				el('td', {}, enabled),
+				el('td', {}, schedule),
+				el('td', { class: 'cmd' }, [
+					entry.command || '',
+					badge ? el('span', { class: 'task-badge' }, badge) : null
+				]),
 				el('td', {}, entry.source || ''),
-				el('td', { class: 'mono' }, entry.schedule || ''),
-				el('td', { class: 'cmd' }, entry.command || ''),
-				el('td', {}, entry.managed ? '本插件' : '')
+				el('td', {}, [el('div', { class: 'task-actions' }, [save, remove])])
 			]));
 		});
 	}
@@ -596,7 +736,9 @@
 			if (state.tab === 'logs' && $('#log-follow').checked && state.pollCount % 2 === 0)
 				await fetchLog(true);
 
-			if (state.tab === 'standalone')
+			// Only poll this tab while a core update is running; otherwise a
+			// rebuild every few seconds would steal focus from the inputs.
+			if (state.tab === 'standalone' && state.standalone && state.standalone.updating)
 				await refreshStandalone().catch(() => {});
 		}
 		catch (e) {
@@ -1151,6 +1293,7 @@
 			await loadConfig();
 			await refreshNodes();
 			await refreshStatus();
+			await refreshTasks();
 			toast('配置已保存');
 		}
 		catch (e) {
@@ -1248,10 +1391,9 @@
 			refreshStandalone().catch((e) => toast(e.message || '刷新失败', true));
 		});
 		$('#btn-sa-save').addEventListener('click', saveStandalone);
-		$('#btn-sa-update-mihomo').addEventListener('click', () => updateStandaloneCore('mihomo'));
-		$('#btn-sa-update-xray').addEventListener('click', () => updateStandaloneCore('xray'));
 
 		$('#btn-add-worker').addEventListener('click', addWorker);
+		$('#btn-task-add').addEventListener('click', addTask);
 		$('#btn-log-clear').addEventListener('click', () => { $('#log-view').textContent = ''; });
 
 		$$('.save-config').forEach((button) => {

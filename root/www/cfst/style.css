@@ -173,6 +173,32 @@ table.data tr.best td { font-weight: 650; }
 table.data td.cmd { font-family: var(--mono); font-size: 0.76rem; word-break: break-all; }
 table.data td input[type="text"], table.data td input[type="number"] { min-width: 110px; }
 table.data td input.regions { min-width: 150px; font-family: var(--mono); }
+.task-actions { display: inline-flex; gap: 6px; align-items: center; }
+.task-badge {
+	display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 999px;
+	background: var(--accent-soft); color: var(--accent); font-size: 0.7rem;
+	font-family: inherit; white-space: nowrap;
+}
+.task-add { margin-top: 12px; align-items: end; }
+.task-add label.check { align-self: center; }
+
+/* core module cards */
+.badge {
+	display: inline-block; padding: 2px 8px; border-radius: 999px;
+	background: var(--bg-soft); color: var(--muted);
+	font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+}
+.badge.ok { color: var(--ok); background: rgba(22, 163, 74, 0.12); }
+.badge.bad { color: var(--danger); background: rgba(220, 38, 38, 0.1); }
+.badge.info { color: var(--accent); background: var(--accent-soft); }
+.core-card { gap: 10px; }
+.core-card-head { display: flex; align-items: center; gap: 10px; }
+.core-card-head h2 { margin: 0 auto 0 0; font-size: 1rem; font-weight: 700; }
+.kv { display: grid; grid-template-columns: 72px 1fr; gap: 6px 14px; margin: 0; }
+.kv dt { color: var(--muted); font-size: 0.78rem; }
+.kv dd { margin: 0; font-size: 0.82rem; word-break: break-all; }
+.core-update-row { display: flex; gap: 8px; align-items: center; }
+.core-update-row input { flex: 1; min-width: 0; }
 
 .log-view {
 	margin: 0; padding: 12px; min-height: 280px; max-height: 55vh; overflow: auto;

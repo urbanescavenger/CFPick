@@ -80,7 +80,7 @@
 
 *   **启用开关**：勾选「启用独立内核」并保存。启用后，「开始测速」的每个 worker 用本机内核拉起候选 IP 的本地 SOCKS（`cfst core start`），不再调用 PassWall 的 `run_socks`；关闭则完全保持原来的 PassWall 流程。
 *   **同一套配置**：节点仍是「节点」页里的 PassWall worker，IP 列表、探测/下载参数、定时任务都不变；不需要第二套节点或分享链接。
-*   **双内核 + 自助升级**：mihomo 与 Xray-core 二选一；优先复用系统 `/usr/bin/mihomo`、`/usr/bin/xray`，也可在页签里「安装/升级」到 `/etc/cf-speedtest/state/core`（独立于 PassWall 的内核）。
+*   **双内核 + 自助升级**：mihomo 与 Xray-core 二选一；页签按内核各显示一张卡片（版本、路径、来源、当前使用状态），可填版本标签后单独「安装/升级」到 `/etc/cf-speedtest/state/core`（独立于 PassWall 的内核），也可继续复用系统 `/usr/bin/mihomo`、`/usr/bin/xray`。
 *   **不碰 PassWall**：独立模式下测速期间不改写节点 `address`、不切换全局节点；内核出站带 `mark 255`，命中 PassWall OUTPUT 链的 `meta mark 255 return`，保持「本地 SOCKS → 被测节点」单层，**不需要修改 PassWall 配置**。节点类型与所选内核不兼容（如 ss/hysteria2、带 plugin 的 SS、VMess xhttp 选 mihomo 等）时，该节点自动回退 PassWall `run_socks`，并在日志里说明。
 *   **写回**：测完仍按原逻辑把各 worker 的最优 IP 写回 PassWall 节点；如果节点配置了 DDNS 域名，则该节点只写 DNS、不回写（见下）。
 *   **CLI**：
@@ -119,7 +119,10 @@ rpcd 对象 `passwall-speedtest` 同时提供两套方法：
 | `api_history` | read | — | 持久历史（与旧 `get_history` 相同） |
 | `api_nodes` | read | — | 本机各代理软件的节点列表 |
 | `api_log` | read | `pos` | 增量日志，`pos` 为上次返回的位置 |
-| `api_tasks` | read | — | `/etc/crontabs/root`、`/etc/crontab` 的只读任务列表，标记本插件维护的行 |
+| `api_tasks` | read | — | 只列出与本插件相关的 crontab 任务（`/etc/crontabs/root`、`/etc/crontab`），含计划、命令与启用状态 |
+| `api_task_save` | write | `source` `line` `schedule` `enabled` | 修改相关任务的计划或启用/停用；`start` 主任务同步到 UCI |
+| `api_task_delete` | write | `source` `line` | 删除相关任务；`start` 主任务通过关闭 UCI 定时移除 |
+| `api_task_add` | write | `source` `schedule` `command` | 添加相关任务（命令必须指向本插件） |
 | `api_run_start` | write | — | 开始一轮完整测速 |
 | `api_run_retest` | write | — | 复测现有最优 IP |
 | `api_run_stop` | write | — | 请求停止（协作式，完成收尾后退出） |
@@ -164,6 +167,8 @@ ubus call passwall-speedtest api_tasks
 ## 定时任务
 
 内置 cron 调度，支持按 1~24 小时间隔运行，或填写自定义 cron 表达式。`init.d` 脚本以幂等方式按需更新 crontab，不会重复写入。
+
+操作台「概览 → 定时任务」只显示与本插件相关的 crontab 行，可直接修改五段计划、启用/停用、删除，或添加 `start` / `retest` / `test` / `replace` 任务。`start` 主任务仍由设置页与 UCI 维护，改它会同步回设置；其余相关任务直接写入 `/etc/crontabs/root`。停用不会删除该行，而是加上 `# [cfst-disabled]` 前缀注释，随时可以恢复。
 
 每次整跑在入口持有一把单实例锁：同一时刻只允许一次完整运行，重叠触发（定时任务重叠、页面连点、SSH 手敲）会被**跳过并记一行日志**，不会两套 worker 去抢同一批 passwall 节点、互删中间状态。锁的持有者被 kill -9 / 断电带走时留下的残留锁，会在下次运行时自动接管。自定义 cron 注意分钟字段别写 `*`（`* 19 * * 4` 是「周四 19 点内每分钟一次」，要一次请写 `0 19 * * 4`）。
 

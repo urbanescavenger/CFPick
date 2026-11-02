@@ -79,7 +79,7 @@ Since 2.1 the **Standalone** tab in the operations console can switch the unifie
 
 *   **Enable switch**: tick "Enable standalone core" and save. When enabled, every worker starts its candidate IP through the local core (`cfst core start`) instead of PassWall's `run_socks`; when disabled, the original PassWall flow is unchanged.
 *   **Same configuration**: workers are still the PassWall nodes from the **Nodes** tab; IP lists, probe/download settings and schedules are unchanged. There is no second node list or share-link config.
-*   **Two cores + self-upgrade**: choose mihomo or Xray-core. Existing `/usr/bin/mihomo` and `/usr/bin/xray` are reused; the tab can also install/upgrade a managed copy under `/etc/cf-speedtest/state/core`, independent of PassWall.
+*   **Two cores + self-upgrade**: choose mihomo or Xray-core. Each core gets its own card (version, path, source and current-use badge) and can be installed/upgraded separately, optionally pinned to a release tag; the managed copy lives under `/etc/cf-speedtest/state/core`, independent of PassWall. Existing `/usr/bin/mihomo` and `/usr/bin/xray` are reused when present.
 *   **Hands off PassWall**: during the test the node `address` is not rewritten and the global node is not switched. Core outbounds carry `mark 255`, matching PassWall's `meta mark 255 return`, so the path stays single-hop (local SOCKS → node). **No PassWall configuration changes are needed.** If a node is incompatible with the selected core (ss/hysteria2, SS with plugin, VMess xhttp with mihomo, …), that node falls back to PassWall `run_socks` and the log says so.
 *   **Write-back**: the best IP of each worker is still written to its PassWall node, unless the worker has a DDNS domain (see below).
 *   **CLI**:
@@ -118,7 +118,10 @@ The rpcd object `passwall-speedtest` exposes two sets of methods:
 | `api_history` | read | — | Persistent history (same data as `get_history`) |
 | `api_nodes` | read | — | Nodes of each installed proxy tool |
 | `api_log` | read | `pos` | Incremental log chunk starting at the previous position |
-| `api_tasks` | read | — | Read-only task list from `/etc/crontabs/root` and `/etc/crontab`, marking this plugin's line |
+| `api_tasks` | read | — | Only this plugin's crontab tasks (`/etc/crontabs/root`, `/etc/crontab`), with schedule, command and enabled state |
+| `api_task_save` | write | `source` `line` `schedule` `enabled` | Change a related task's schedule or enable/disable it; the `start` task is synced to UCI |
+| `api_task_delete` | write | `source` `line` | Delete a related task; the `start` task is removed by disabling the UCI schedule |
+| `api_task_add` | write | `source` `schedule` `command` | Add a related task (the command must target this plugin) |
 | `api_run_start` | write | — | Start a full test |
 | `api_run_retest` | write | — | Retest the current best IPs |
 | `api_run_stop` | write | — | Request a cooperative stop (finishes the current write-back) |
@@ -163,6 +166,8 @@ After a test completes:
 ## Scheduled Tasks
 
 Built-in cron scheduling supports a 1–24 hour interval or a custom cron expression. The `init.d` script updates the crontab idempotently, only when it changes.
+
+The console's "Overview → Scheduled Tasks" panel lists only crontab lines related to this plugin. From there you can edit the five-field schedule, enable/disable, delete, or add a `start` / `retest` / `test` / `replace` task. The `start` task is still owned by the settings page and UCI, so editing it syncs back to Settings; other related tasks are written straight to `/etc/crontabs/root`. Disabling keeps the line with a `# [cfst-disabled]` prefix so it can be restored later.
 
 Every full run takes a single-instance lock at its entry point: only one run at a time, and an overlapping trigger (duplicate cron firings, repeated UI clicks, manual SSH runs) is **skipped with one log line** instead of racing the running one over the same passwall nodes. A leftover lock from a killed process or a power loss is taken over automatically on the next run. When writing a custom cron expression, mind the minute field: `* 19 * * 4` means "every minute of hour 19 on Thursday" — use `0 19 * * 4` for a single run.
 
