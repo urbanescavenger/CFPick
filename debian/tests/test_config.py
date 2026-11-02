@@ -47,6 +47,50 @@ class NormalizeTests(unittest.TestCase):
         cfg = config.normalize({"schedule": {"custom_cron": "bad"}})
         self.assertEqual(cfg["schedule"]["custom_cron"], "0 3 * * *")
 
+    def test_cron_validation(self):
+        valid = [
+            "0 3 * * *",
+            "*/30 * * * *",
+            "0 */6 * * *",
+            "0 3 1 * *",
+            "0 3 * * mon-fri",
+            "5,10 0-6/2 * * 0",
+            "0 0 1 jan,jul *",
+            "0 3 * * 7",
+        ]
+        invalid = [
+            "0 3 * *",          # only four fields
+            "60 3 * * *",       # minute out of range
+            "0 24 * * *",       # hour out of range
+            "0 3 32 * *",       # day out of range
+            "0 3 * 13 *",       # month out of range
+            "0 3 * * 8",        # weekday out of range
+            "0 3 * * ?",        # Quartz-only token
+            "*/0 * * * *",      # zero step
+            "1-5-7 * * * *",    # malformed range
+            "0 3 * * * *",      # six fields
+        ]
+        for expression in valid:
+            self.assertTrue(config.valid_cron(expression), expression)
+        for expression in invalid:
+            self.assertFalse(config.valid_cron(expression), expression)
+
+    def test_schedule_defaults_and_legacy_interval(self):
+        default = config.normalize({})
+        self.assertTrue(default["schedule"]["custom_enabled"])
+        self.assertEqual(default["schedule"]["custom_cron"], "0 3 * * *")
+        # Old configs with only ``hour`` keep the interval semantics.
+        legacy = config.normalize({"schedule": {"hour": 6}})
+        self.assertFalse(legacy["schedule"]["custom_enabled"])
+        self.assertEqual(legacy["schedule"]["hour"], 6)
+
+    def test_invalid_structured_cron_falls_back(self):
+        cfg = config.normalize({"schedule": {
+            "custom_enabled": True,
+            "custom_cron": "0 99 * * *",
+        }})
+        self.assertEqual(cfg["schedule"]["custom_cron"], "0 3 * * *")
+
     def test_regions_normalized(self):
         cfg = config.normalize({"ip_lists": [
             {"enabled": True, "regions": "jp, sg  jp"},

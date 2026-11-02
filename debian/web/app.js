@@ -762,6 +762,63 @@
 	}
 
 	// ── settings form ───────────────────────────────────────────────────
+	const CRON_FIELDS = ['schedule_minute', 'schedule_hour', 'schedule_day',
+		'schedule_month', 'schedule_weekday'];
+	const CRON_PRESETS = {
+		hourly: '0 * * * *',
+		'half-hourly': '*/30 * * * *',
+		'6h': '0 */6 * * *',
+		'12h': '0 */12 * * *',
+		daily: '0 3 * * *',
+		weekly: '0 3 * * 1',
+		monthly: '0 3 1 * *',
+	};
+
+	function cronParts() {
+		return CRON_FIELDS.map((id) => {
+			const node = $('#' + id);
+			return node ? node.value.trim() : '';
+		});
+	}
+
+	function setCronParts(expression) {
+		const parts = String(expression || '').trim().split(/\s+/);
+		CRON_FIELDS.forEach((id, index) => {
+			const node = $('#' + id);
+			if (node) node.value = parts[index] || '*';
+		});
+	}
+
+	function cronExpression() {
+		return cronParts().map((part) => part || '*').join(' ');
+	}
+
+	function updateCronPreview() {
+		setText('schedule-preview', cronExpression());
+	}
+
+	function matchCronPreset(expression) {
+		const normalized = String(expression || '').trim().replace(/\s+/g, ' ');
+		for (const key of Object.keys(CRON_PRESETS)) {
+			if (CRON_PRESETS[key] === normalized) return key;
+		}
+		return 'custom';
+	}
+
+	function applySchedulePreset() {
+		const select = $('#schedule_preset');
+		const expression = select ? CRON_PRESETS[select.value] : '';
+		if (!expression) return;
+		setCronParts(expression);
+		updateCronPreview();
+	}
+
+	function onCronInput() {
+		const select = $('#schedule_preset');
+		if (select) select.value = matchCronPreset(cronExpression());
+		updateCronPreview();
+	}
+
 	function fillSettings(cfg) {
 		const set = (id, value) => { const node = $('#' + id); if (node) node.value = value == null ? '' : value; };
 		const check = (id, value) => { const node = $('#' + id); if (node) node.checked = !!value; };
@@ -794,9 +851,15 @@
 		set('ddns_ttl', ddns.ttl);
 		check('ddns_proxied', cloudflare.proxied);
 		check('schedule_enabled', cfg.schedule.enabled);
-		check('schedule_custom', cfg.schedule.custom_enabled);
-		set('schedule_hour', cfg.schedule.hour);
-		set('schedule_cron', cfg.schedule.custom_cron);
+		// Older configs selected between an hour interval and a raw expression.
+		// Show the expression that is actually in effect, then always save the
+		// structured five-field form.
+		let cronExpr = cfg.schedule.custom_cron || '0 3 * * *';
+		if (!cfg.schedule.custom_enabled && cfg.schedule.hour)
+			cronExpr = '0 */' + cfg.schedule.hour + ' * * *';
+		setCronParts(cronExpr);
+		if ($('#schedule_preset')) $('#schedule_preset').value = matchCronPreset(cronExpr);
+		updateCronPreview();
 		if ($('#core-type')) $('#core-type').value = cfg.core.type;
 		set('core_dns', cfg.core.dns_nameserver);
 		set('web_listen', cfg.web.listen);
@@ -849,11 +912,17 @@
 				proxied: check('ddns_proxied'),
 			}),
 		});
+		const parts = cronParts();
+		if (parts.some((part) => !part))
+			throw new Error('定时任务的分、时、日、月、星期都不能为空');
+		if (parts.some((part) => !/^[0-9A-Za-z*,/-]+$/.test(part)))
+			throw new Error('定时任务包含不支持的字符，只允许数字、字母、* , / -');
 		cfg.schedule = Object.assign({}, cfg.schedule, {
 			enabled: check('schedule_enabled'),
-			custom_enabled: check('schedule_custom'),
-			custom_cron: text('schedule_cron') || '0 3 * * *',
-			hour: integer('schedule_hour', 24, 1, 24),
+			custom_enabled: true,
+			custom_cron: parts.join(' '),
+			// Kept for older readers; custom_enabled=true makes it unused.
+			hour: (cfg.schedule && cfg.schedule.hour) || 24,
 		});
 		const corePaths = Object.assign({}, (cfg.core && cfg.core.paths) || {});
 		$$('#core-cards input[data-core-path]').forEach((input) => {
@@ -874,13 +943,11 @@
 
 	function updateFieldVisibility() {
 		const source = $('#ip_source') ? $('#ip_source').value : '';
-		const customCron = $('#schedule_custom') ? $('#schedule_custom').checked : false;
 		$$('[data-when]').forEach((node) => {
 			const key = node.dataset.when;
 			let visible = true;
 			if (key === 'online') visible = source === 'online';
 			else if (key === 'custom_file') visible = source === 'custom_file';
-			else if (key === 'custom-cron') visible = customCron;
 			node.classList.toggle('hidden', !visible);
 		});
 	}
@@ -1331,7 +1398,11 @@
 			saveConfig('设置已保存');
 		});
 		$('#ip_source').addEventListener('change', updateFieldVisibility);
-		$('#schedule_custom').addEventListener('change', updateFieldVisibility);
+		$('#schedule_preset').addEventListener('change', applySchedulePreset);
+		CRON_FIELDS.forEach((id) => {
+			const node = $('#' + id);
+			if (node) node.addEventListener('input', onCronInput);
+		});
 		$('#btn-cron-refresh').addEventListener('click', refreshCronTasks);
 		$('#btn-ddns-preview').addEventListener('click', previewDdns);
 		$('#btn-ddns-apply').addEventListener('click', applyDdns);

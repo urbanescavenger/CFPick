@@ -290,7 +290,10 @@ cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 | `core.paths.mihomo` | 空 | 自定义 mihomo 二进制路径；空 = 使用托管内核 |
 | `core.paths.xray` | 空 | 自定义 Xray 二进制路径；空 = 使用托管内核 |
 | `core.dns_nameserver` | 空 | 内核 DNS；空 = 系统 DNS |
-| `schedule` | 关闭 | `enabled` / `custom_enabled` / `custom_cron` / `hour` |
+| `schedule.enabled` | `false` | 是否启用定时测速 |
+| `schedule.custom_cron` | `0 3 * * *` | 标准五段 cron：分 时 日 月 星期；Web 保存时由五个输入框合成 |
+| `schedule.custom_enabled` | `true` | true 时使用 `custom_cron`；旧配置只有 `hour`、没有这个字段时按间隔处理 |
+| `schedule.hour` | `24` | 旧版「间隔小时」，仅在 `custom_enabled=false` 时生效 |
 | `web.listen` / `web.port` | `127.0.0.1:8787` | Web 监听；修改后需重启服务 |
 | `web.token` | 空 | API 访问令牌；空 = 不校验 |
 | `export.csv` / `export.json` | `true` | 是否提供对应格式的下载（CSV 仍会写入内部结果文件） |
@@ -323,11 +326,34 @@ cfst serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 
 ```cron
 # >>> cf-speedtest >>>
-0 */3 * * * /usr/local/bin/cfst run start >/dev/null 2>&1
+0 3 * * * /usr/local/bin/cfst run start >/dev/null 2>&1
 # <<< cf-speedtest <<<
 ```
 
-自定义 cron 为五段表达式；注意分钟字段不要写 `*`（`* 19 * * 4` 表示周四 19 点内每分钟一次）。
+页面把 cron 拆成五个输入框：**分钟 / 小时 / 日 / 月 / 星期**，可以直接写标准五段
+表达式里的任意合法值：
+
+| 字段 | 范围 | 示例 |
+| --- | --- | --- |
+| 分钟 | 0–59 | `0`、`*/30`、`5,35` |
+| 小时 | 0–23 | `3`、`*/6`、`0-6` |
+| 日 | 1–31 | `*`、`1`、`1,15` |
+| 月 | 1–12 或 `jan`–`dec` | `*`、`6`、`jan,jul` |
+| 星期 | 0–7 或 `sun`–`sat` | `*`、`1`、`mon-fri`（`0` 和 `7` 都是周日） |
+
+支持 `*`、数字、范围 `1-5`、列表 `1,15`、步长 `*/6` / `0-6/2`。顶部还有常用频率
+预设（每小时、每 30 分钟、每 6/12 小时、每天 03:00、每周一、每月 1 日），选预设会
+自动填好五个字段；手动改任意字段会切回「自定义」。
+
+注意：
+
+- 「日」和「星期」同时限定时，cron 是**或**关系，不是“且”。
+- 分钟写 `*` 表示每分钟跑一次；除非你确实要这样，否则分钟字段至少写 `0` 或 `*/N`。
+- 表达式不合法（字段越界、格式错误、用了 Debian cron 不支持的 `?` 等）时，保存会
+  回退为 `0 3 * * *` 并在页面提示原因。
+- 旧配置里用「间隔小时」保存的，页面会自动换算成等价的 cron 表达式显示；保存一次后
+  就切换为结构化形式。
+
 命令行方式：`cfst cron apply` / `cfst cron remove`。
 
 「设置 → 已设置的任务」会以只读方式列出系统 cron 的全部来源：当前用户及其它用户的

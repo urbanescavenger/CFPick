@@ -210,6 +210,26 @@ class WebTests(unittest.TestCase):
         masked["ddns"]["cloudflare"]["api_token"] = ""
         self.request("/api/config", method="POST", payload={"config": masked})
 
+    def test_schedule_cron_is_validated(self):
+        status, data = self.request("/api/config")
+        self.assertEqual(status, 200)
+        cfg = data["config"]
+        cfg["schedule"]["enabled"] = False
+        cfg["schedule"]["custom_enabled"] = True
+        cfg["schedule"]["custom_cron"] = "0 99 * * *"
+        status, data = self.request("/api/config", method="POST",
+                                    payload={"config": cfg})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["config"]["schedule"]["custom_cron"], "0 3 * * *")
+        self.assertTrue(any("cron" in warning for warning in data["warnings"]))
+
+        fixed = data["config"]
+        fixed["schedule"]["custom_cron"] = "15 4 * * 1"
+        status, data = self.request("/api/config", method="POST",
+                                    payload={"config": fixed})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["config"]["schedule"]["custom_cron"], "15 4 * * 1")
+
     def test_token_auth(self):
         status, data = self.request("/api/config")
         self.assertEqual(status, 200)

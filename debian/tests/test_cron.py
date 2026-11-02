@@ -55,6 +55,23 @@ class ParseTextTests(unittest.TestCase):
         self.assertEqual(cron.split_line(""), ("", ""))
 
 
+class BuildLineTests(unittest.TestCase):
+    def test_custom_expression(self):
+        with mock.patch.object(cron, "cli_command", return_value="/usr/local/bin/cfst"):
+            line = cron.build_line({
+                "custom_enabled": True,
+                "custom_cron": "15 4 * * 1",
+            })
+        self.assertEqual(line,
+                         "15 4 * * 1 /usr/local/bin/cfst run start >/dev/null 2>&1")
+
+    def test_legacy_hour_interval(self):
+        with mock.patch.object(cron, "cli_command", return_value="/usr/local/bin/cfst"):
+            line = cron.build_line({"custom_enabled": False, "hour": 6})
+        self.assertEqual(line,
+                         "0 */6 * * * /usr/local/bin/cfst run start >/dev/null 2>&1")
+
+
 class ListTasksTests(unittest.TestCase):
     def _snapshot(self, text, files=None, which="/usr/bin/crontab"):
         with mock.patch.object(cron, "_read_crontab", return_value=text), \

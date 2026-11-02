@@ -69,7 +69,7 @@ DEFAULT_CONFIG = {
     },
     "schedule": {
         "enabled": False,
-        "custom_enabled": False,
+        "custom_enabled": True,
         "custom_cron": "0 3 * * *",
         "hour": 24,
     },
@@ -204,11 +204,67 @@ def _normalize_nodes(value):
     return out
 
 
-def _valid_cron(expr):
-    parts = expr.split()
+_MONTH_NAMES = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_WEEKDAY_NAMES = {
+    "sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6,
+}
+# (minimum, maximum, allowed names) for minute/hour/day/month/weekday.
+_CRON_FIELDS = (
+    (0, 59, None),
+    (0, 23, None),
+    (1, 31, None),
+    (1, 12, _MONTH_NAMES),
+    (0, 7, _WEEKDAY_NAMES),
+)
+
+
+def _cron_value(token, minimum, maximum, names):
+    token = token.lower()
+    if names and token in names:
+        return names[token]
+    if token.isdigit():
+        value = int(token)
+        return value if minimum <= value <= maximum else None
+    return None
+
+
+def _valid_cron_field(part, minimum, maximum, names=None):
+    if not part or not re.match(r"^[0-9A-Za-z*/,?-]+$", part):
+        return False
+    for item in part.split(","):
+        if not item:
+            return False
+        base, separator, step = item.partition("/")
+        if separator and (not step.isdigit() or int(step) <= 0):
+            return False
+        if base == "*":
+            continue
+        if "-" in base:
+            start, _, end = base.partition("-")
+            first = _cron_value(start, minimum, maximum, names)
+            last = _cron_value(end, minimum, maximum, names)
+            if first is None or last is None or first > last:
+                return False
+        elif _cron_value(base, minimum, maximum, names) is None:
+            return False
+    return True
+
+
+def valid_cron(expr):
+    """Validate a standard five-field crontab expression.
+
+    Supports ``*``, numbers, names (jan/dec, sun/sat), ranges, lists and
+    steps (``*/5``, ``mon-fri/2``).  Quartz-only tokens such as ``?`` are
+    rejected because Debian's cron would not understand them.
+    """
+    parts = str(expr or "").split()
     if len(parts) != 5:
         return False
-    return all(re.match(r"^[0-9A-Za-z*/,?-]+$", part) for part in parts)
+    return all(_valid_cron_field(part, *field)
+               for part, field in zip(parts, _CRON_FIELDS))
 
 
 def normalize(data):
@@ -279,12 +335,15 @@ def normalize(data):
     }
 
     schedule = data.get("schedule") if isinstance(data, dict) and isinstance(data.get("schedule"), dict) else {}
+    # A config that only has the old ``hour`` field keeps interval semantics;
+    # anything else defaults to the five-field expression.
+    legacy_interval = "custom_enabled" not in schedule and "hour" in schedule
     custom_cron = _clean_text(schedule.get("custom_cron"), DEFAULT_CONFIG["schedule"]["custom_cron"])
-    if not _valid_cron(custom_cron):
+    if not valid_cron(custom_cron):
         custom_cron = DEFAULT_CONFIG["schedule"]["custom_cron"]
     cfg["schedule"] = {
         "enabled": _as_bool(schedule.get("enabled"), False),
-        "custom_enabled": _as_bool(schedule.get("custom_enabled"), False),
+        "custom_enabled": _as_bool(schedule.get("custom_enabled"), not legacy_interval),
         "custom_cron": custom_cron,
         "hour": _as_int(schedule.get("hour"), 24, 1, 24),
     }

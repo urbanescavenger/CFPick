@@ -230,13 +230,36 @@
         <div class="card-head"><h2>定时任务</h2></div>
         <div class="grid three">
           <label class="check"><input id="schedule_enabled" type="checkbox"> 启用定时测速</label>
-          <label class="check"><input id="schedule_custom" type="checkbox"> 使用自定义 cron</label>
-          <label>间隔（小时） <input id="schedule_hour" type="number" min="1" max="24" step="1"></label>
-          <label class="span2" data-when="custom-cron">自定义 cron
-            <input id="schedule_cron" type="text" spellcheck="false" placeholder="0 3 * * *">
+          <label>常用频率
+            <select id="schedule_preset">
+              <option value="custom">自定义</option>
+              <option value="hourly">每小时（整点）</option>
+              <option value="half-hourly">每 30 分钟</option>
+              <option value="6h">每 6 小时</option>
+              <option value="12h">每 12 小时</option>
+              <option value="daily">每天 03:00</option>
+              <option value="weekly">每周一 03:00</option>
+              <option value="monthly">每月 1 日 03:00</option>
+            </select>
           </label>
         </div>
-        <p class="muted">保存配置时以幂等方式写入 crontab，只维护带 <code>cf-speedtest</code> 标记的块。自定义 cron 是标准五段表达式，注意分钟字段不要写成 <code>*</code>。</p>
+        <div class="grid five cron-grid">
+          <label>分钟 <input id="schedule_minute" type="text" spellcheck="false" placeholder="0"></label>
+          <label>小时 <input id="schedule_hour" type="text" spellcheck="false" placeholder="3"></label>
+          <label>日 <input id="schedule_day" type="text" spellcheck="false" placeholder="*"></label>
+          <label>月 <input id="schedule_month" type="text" spellcheck="false" placeholder="*"></label>
+          <label>星期 <input id="schedule_weekday" type="text" spellcheck="false" placeholder="*"></label>
+        </div>
+        <p class="muted">
+          标准五段 cron：分 时 日 月 星期，支持 <code>*</code>、数字、范围
+          <code>1-5</code>、列表 <code>1,15</code>、步长 <code>*/6</code>，月份和星期也
+          可以用 <code>jan-dec</code> / <code>sun-sat</code>。星期 <code>0</code> 和
+          <code>7</code> 都表示周日；「日」和「星期」同时限定时，cron 是“或”关系。
+        </p>
+        <p class="muted">即将写入：
+          <code id="schedule-preview">0 3 * * *</code>
+          <span>（保存配置时以幂等方式写入 crontab，只维护带 <code>cf-speedtest</code> 标记的块）</span>
+        </p>
       </div>
 
       <div class="card">

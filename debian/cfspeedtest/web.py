@@ -594,6 +594,13 @@ class Handler(BaseHTTPRequestHandler):
                 ((previous.get("ddns") or {}).get("cloudflare") or {}).get("api_token", ""))
         normalized = config.normalize(incoming)
         warnings = _config_warnings(normalized)
+        incoming_schedule = incoming.get("schedule") if isinstance(incoming.get("schedule"), dict) else {}
+        incoming_cron = str(incoming_schedule.get("custom_cron") or "").strip()
+        if (incoming_schedule.get("custom_enabled") and incoming_cron
+                and not config.valid_cron(incoming_cron)):
+            warnings.append(
+                "定时 cron 表达式「%s」无效，已回退为 %s；格式为 分 时 日 月 星期"
+                % (incoming_cron, normalized["schedule"]["custom_cron"]))
         saved = config.save(normalized)
         cron_error = ""
         try:
