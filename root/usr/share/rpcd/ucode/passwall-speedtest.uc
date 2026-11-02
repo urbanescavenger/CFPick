@@ -940,6 +940,21 @@ function api_tasks_data() {
 	return { managed: managed, sources: sources, entries: entries };
 }
 
+// Called from LuCI's minimal Settings page: forget the console password and
+// invalidate the current console session.  The next console visit offers the
+// first-run "create admin password" form again.
+function api_web_reset_data() {
+	let cur = uci.cursor();
+
+	try { cur.load('passwall-speedtest'); } catch (e) {}
+	try { cur.delete('passwall-speedtest', 'global', 'web_password'); } catch (e) {}
+	cur.commit('passwall-speedtest');
+
+	try { fs.unlink('/tmp/cfst-web.session'); } catch (e) {}
+
+	return { reset: true };
+}
+
 return {
 	'passwall-speedtest': {
 		// Legacy API: kept for the existing Settings/Log pages and external
@@ -1023,6 +1038,10 @@ return {
 
 		api_tasks: api(function() {
 			return api_tasks_data();
+		}),
+
+		api_web_reset: api(function() {
+			return api_web_reset_data();
 		}),
 
 		api_run_start: api(function() {

@@ -12,7 +12,7 @@
 	},
 
 	"admin/services/passwall-speedtest/console": {
-		"title": "Console",
+		"title": "Operations Console",
 		"order": 1,
 		"action": {
 			"type": "view",
@@ -25,7 +25,7 @@
 		"order": 2,
 		"action": {
 			"type": "view",
-			"path": "passwall-speedtest/general"
+			"path": "passwall-speedtest/settings"
 		}
 	}
 }

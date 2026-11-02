@@ -640,3 +640,45 @@ msgstr "完整配置仍可在 "
 
 msgid "."
 msgstr "。"
+
+msgid "Operations Console"
+msgstr "操作台"
+
+msgid "The standalone console is the main operations and configuration UI: overview, nodes, IP lists, settings, logs and third-party integrations. This LuCI page only shows its status and opens it."
+msgstr "独立操作台是主要的管理和配置界面：概览、节点、IP 列表、设置、日志和第三方集成。本 LuCI 页面只显示运行状态并提供打开入口。"
+
+msgid "Enable it in Settings and save."
+msgstr "请在「设置」中启用并保存。"
+
+msgid "Console service settings (enable, port, username, password reset) are in "
+msgstr "操作台入口设置（启用、端口、用户名、重置密码）在 "
+
+msgid "This page only configures the standalone web console entry. All speed-test settings and operations are in the console."
+msgstr "本页只配置独立 Web 操作台入口；所有测速设置和操作都在操作台里。"
+
+msgid "Starts the separate console on its own port with its own admin login."
+msgstr "在独立端口启动操作台，使用单独的管理员登录。"
+
+msgid "The password is created on the console's first-run page and changed from the console settings."
+msgstr "密码在操作台首次打开时创建，之后可在操作台设置中修改。"
+
+msgid "Session timeout (seconds)"
+msgstr "会话有效期（秒）"
+
+msgid "How long a console login stays valid. Default 3600 seconds."
+msgstr "操作台登录保持有效的时长，默认 3600 秒。"
+
+msgid "Opens the standalone console in a new tab."
+msgstr "在新标签页打开独立操作台。"
+
+msgid "Reset console password"
+msgstr "重置操作台密码"
+
+msgid "Forgets the console admin password and invalidates existing console sessions. The next console visit asks you to create a new password."
+msgstr "清除操作台管理员密码并使现有会话失效；下次打开操作台会要求重新创建密码。"
+
+msgid "Reset the console password? The next console visit will ask for a new one."
+msgstr "重置操作台密码？下次打开操作台会要求创建新密码。"
+
+msgid "Console password reset. Open the console to create a new one."
+msgstr "操作台密码已重置，请打开操作台创建新密码。"

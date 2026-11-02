@@ -34,11 +34,11 @@
 Only two entries under LuCI → Services → PassWall Speed Test, similar to Lucky:
 
 *   **Console**: shows the test status, the standalone console URL and an "Open web console" button; the actual operations happen in the standalone console.
-*   **Settings**: the full configuration page, including Basic / Crontab / Web Console, CM IP lists, third-party integrations, worker assignment and Best IP.
+*   **Settings**: only the console entry settings: enable, port, listen address, username, session timeout, open console and reset password. All speed-test settings and operations live in the console tabs.
 
 ## Standalone Web Console
 
-The standalone console (`cfst-web`) runs on its own port with its own login and management UI. LuCI's Settings page keeps the full configuration; both sides read the same data.
+The standalone console (`cfst-web`) runs on its own port with its own login and management UI. LuCI's Settings page only configures the console entry; all speed-test settings and operations live in the console.
 
 ### Enable
 

@@ -15,7 +15,8 @@
 			"ubus": {
 				"passwall-speedtest": [
 					"start", "start_retest", "stop",
-					"api_run_start", "api_run_retest", "api_run_stop"
+					"api_run_start", "api_run_retest", "api_run_stop",
+					"api_web_reset"
 				]
 			},
 			"uci": [ "passwall-speedtest" ]

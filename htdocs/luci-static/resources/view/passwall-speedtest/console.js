@@ -61,10 +61,10 @@ return view.extend({
 		}, 3);
 
 		return E([], [
-			E('h2', {}, _('Console')),
+			E('h2', {}, _('Operations Console')),
 			E('div', { 'class': 'cbi-section' }, [
 				E('p', { 'class': 'cbi-section-descr' },
-					_('The standalone console is the main operations UI: overview, nodes, IP lists, settings, logs and third-party integrations. This LuCI page only shows its status and opens it.')),
+					_('The standalone console is the main operations and configuration UI: overview, nodes, IP lists, settings, logs and third-party integrations. This LuCI page only shows its status and opens it.')),
 				E('div', { 'class': 'cbi-section' }, [
 					E('p', {}, [ E('strong', {}, _('Run status') + ': '), statusNode ]),
 					E('p', {}, [
@@ -74,10 +74,10 @@ return view.extend({
 					enabled ? E('p', { 'class': 'muted' },
 						_('The console has its own login. On first open it asks you to create the admin password.'))
 						: E('p', { 'class': 'muted' },
-						_('Enable it in Settings → Web Console and save.')),
+						_('Enable it in Settings and save.')),
 					E('p', {}, [ openButton ]),
 					E('p', { 'class': 'muted' }, [
-						_('Full configuration stays available in '),
+						_('Console service settings (enable, port, username, password reset) are in '),
 						E('a', { href: L.url('admin/services/passwall-speedtest/settings') }, _('Settings')),
 						'.'
 					])
