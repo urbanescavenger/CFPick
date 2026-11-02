@@ -218,9 +218,20 @@ return view.extend({
 			});
 		};
 
-		const node = m.render();
-		node.appendChild(updateSection(status, update));
+		const section = updateSection(status, update);
+		const rendered = m.render();
 
-		return node;
+		// LuCI's form.Map.render() returns a Promise in some releases and a
+		// DOM node in others; support both instead of calling appendChild
+		// blindly (that produced "node.appendChild is not a function").
+		if (rendered && typeof rendered.appendChild === 'function') {
+			rendered.appendChild(section);
+			return rendered;
+		}
+
+		return Promise.resolve(rendered).then(function(node) {
+			node.appendChild(section);
+			return node;
+		});
 	}
 });
