@@ -700,7 +700,7 @@ def run(mode="start"):
         return 1
 
     if not shutil.which("curl") and not Path(core.find_curl()).exists():
-        logger.log("未找到 curl，请先安装：apt install curl")
+        logger.log("未找到 curl，请先安装（Debian: apt install curl；OpenWrt: opkg install curl）")
         logger.persist(paths.LAST_LOG)
         return 1
 

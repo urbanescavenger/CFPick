@@ -28,13 +28,15 @@
 *   **优化的界面与日志**：重新设计的状态展示；逐 IP 日志如 `进度: 走节点测速 [节点] 5/30 (16%) - 1.2.3.4 延迟 87ms 丢包 0.00 [保留]`。
 *   **中途停止不丢结果**：中途停止会触发 trap 清理 SOCKS、恢复节点 address，若无新结果则保留上一次结果。**用户手动停止第一轮时，已通过延迟的 IP 仍会完成下载实测**（每 worker 最多 `download_test_count` 个（上限 10）；所有 worker 停止探测后逐节点逐 IP 串行）后再写回；「首个 worker 已完成、其余自动提前停止」也一样，不再跳过其余 worker 的下载。
 *   **丰富的应用集成**：优选 IP 可自动应用到 SSR+ / Passwall / PassWall2 / Bypass / Vssr / HOST / MosDNS / astra-dns / 阿里云 DDNS。
+*   **独立内核测速（2.1）**：自带 mihomo / Xray-core 两套内核，通过分享链接测节点、用 `mark 255` 避开 PassWall 全局代理，完全不依赖 `run_socks`，也不需要改写 PassWall 节点。
 
 ## 界面页面
 
-插件在 LuCI → 服务 → PassWall Speed Test 下只有两个入口，和 Lucky 的布局一致：
+插件在 LuCI → 服务 → PassWall Speed Test 下有三个入口：
 
 *   **操作台（Console）**：显示测速运行状态、Web 操作台地址，以及「打开 Web 操作台」按钮；实际操作都在独立操作台里完成。
 *   **设置（Settings）**：只保留 Web 操作台入口配置：启用、端口、监听地址、用户名、会话有效期、打开操作台、重置密码。所有测速设置和操作都在独立操作台的页签里。
+*   **独立测速（Standalone Engine）**：管理 2.1 新增的自带内核引擎（mihomo / Xray-core），见下文。
 
 ## 独立 Web 操作台
 
@@ -72,6 +74,27 @@
     然后重新打开操作台创建密码。
 *   操作台默认只建议在局域网使用（明文 HTTP）；远程访问请走 VPN 或带 TLS 的反向代理，不要把 17544 直接暴露到公网。
 *   服务脚本：`/etc/init.d/cfst-web`；端口、监听地址、用户名由 UCI 的 `web_port` / `web_bind` / `web_user` 控制，保存配置会触发服务重载。
+
+## 独立测速引擎（自带 mihomo / Xray 内核）
+
+2.1 起内置一套**不依赖 PassWall `run_socks` 的独立测速引擎**（源码在 `debian/`，OpenWrt 包内安装到 `/usr/lib/cf-speedtest`）。它直接拉起本机 mihomo 或 Xray-core，把候选 Cloudflare IP 写进一次性内核配置，用 curl 经本地 SOCKS 探测；节点用分享链接维护，不再改写 PassWall 节点的 `address`。
+
+*   **双内核**：mihomo 与 Xray-core 二选一。优先复用系统已有的 `/usr/bin/mihomo`、`/usr/bin/xray`（PassWall 通常已装）；缺失时可在操作台「内核」页从 GitHub 下载到 `/etc/cf-speedtest/state/core`。
+*   **不会被 PassWall 二次代理**：内核出站带 `mark 255`（mihomo 的 `routing-mark`、Xray 的 `sockopt.mark`），命中 PassWall OUTPUT 链里已有的 `meta mark 255 return`。因此即使路由器本机流量默认走全局代理，测速流量仍是「本地 SOCKS → 被测节点」单层；**不需要修改 PassWall 配置**。若使用 ss/hysteria2 等不支持 mark 的核心，请改用 Xray 内核，或临时把目标 IP 加入 `psw_vps`（运行时 nftset，不改配置、不重启）。
+*   **入口**：LuCI → 服务 → PassWall Speed Test → **独立测速（Standalone Engine）**。页面可启用/停用服务、启动/停止引擎，并打开独立操作台。
+*   **独立操作台**：默认 `http://<路由器IP>:17545/`，首次安装生成随机访问令牌；LuCI 页面的「打开独立操作台」会自动附加 `?token=...`。监听地址、端口和令牌保存在 `/etc/cf-speedtest/config.json`（0600）。
+*   **CLI**：
+    ```sh
+    cfst status
+    cfst run start          # 按 config.json 的节点与候选 IP 跑一轮
+    cfst run retest
+    cfst cores              # 查看两个内核的安装状态与版本
+    cfst update-core --type xray|mihomo|all
+    cfst cron list
+    ```
+    配置、结果、历史与下载的内核都在 `/etc/cf-speedtest`；日志在 `/tmp/log/cf-speedtest`。
+*   **依赖**：`python3-light`、`python3-urllib`、`python3-codecs`、`python3-openssl`、`python3-email`、`curl`、`ca-bundle`（由 ipk 自动安装）。
+*   **定位差异**：独立引擎默认**只导出结果**（`result.csv` / `result.json` / `best.json`），不自动写回 PassWall / hosts / DNS；需要写回时继续用上面的 PassWall 测速流程。
 
 ## 管理 API
 

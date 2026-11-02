@@ -955,6 +955,75 @@ function api_web_reset_data() {
 	return { reset: true };
 }
 
+// ── standalone core engine (cf-speedtest) ───────────────────────────────
+// The core-based engine is a separate Python program under /usr/lib/cf-speedtest
+// with its own JSON config and HTTP console.  These methods let the LuCI page
+// show its state and manage the procd service; the access token is only sent
+// to the logged-in LuCI session so the page can open the console with it.
+const STANDALONE_BIN = '/usr/bin/cfst';
+const STANDALONE_CONFIG = '/etc/cf-speedtest/config.json';
+const STANDALONE_PID = '/var/run/cfst.pid';
+
+function standalone_cfg() {
+	let raw = read_file(STANDALONE_CONFIG);
+
+	if (raw == '')
+		return {};
+
+	try {
+		return json(raw) || {};
+	}
+	catch (e) {
+		return {};
+	}
+}
+
+function standalone_status() {
+	let cfg = standalone_cfg();
+	let web = cfg.web || {};
+	let engine = {};
+	let out = command_output(STANDALONE_BIN + ' status 2>/dev/null');
+
+	if (out.code == 0 && out.stdout != '') {
+		try { engine = json(out.stdout) || {}; }
+		catch (e) { engine = {}; }
+	}
+
+	let pid = replace(read_file(STANDALONE_PID), /\s+/g, '');
+	let running = (match(pid, /^[0-9]+$/) && system('kill -0 ' + pid + ' 2>/dev/null') == 0) ? true : false;
+
+	return {
+		service_enabled: fs.access('/etc/rc.d/S97cfst', 'f') ? true : false,
+		service_running: running,
+		web: {
+			listen: web.listen || '',
+			port: int(web.port) || 0,
+			token: web.token || ''
+		},
+		engine: engine
+	};
+}
+
+function standalone_action(action) {
+	let r = command_output('/etc/init.d/cfst ' + action + ' 2>&1');
+
+	return { action: action, code: r.code, output: r.stdout || '' };
+}
+
+function standalone_enable() {
+	let a = standalone_action('enable');
+	let b = standalone_action('start');
+
+	return { action: 'enable', code: b.code, output: (a.output || '') + (b.output || '') };
+}
+
+function standalone_disable() {
+	let a = standalone_action('stop');
+	let b = standalone_action('disable');
+
+	return { action: 'disable', code: b.code, output: (a.output || '') + (b.output || '') };
+}
+
 return {
 	'passwall-speedtest': {
 		// Legacy API: kept for the existing Settings/Log pages and external
@@ -1057,6 +1126,37 @@ return {
 		api_run_stop: api(function() {
 			stop();
 			return { stopped: true };
-		})
+		}),
+
+		// Standalone core-based engine (mihomo / Xray-core).
+		standalone_status: {
+			call: function() {
+				return standalone_status();
+			}
+		},
+
+		standalone_start: {
+			call: function() {
+				return standalone_action('start');
+			}
+		},
+
+		standalone_stop: {
+			call: function() {
+				return standalone_action('stop');
+			}
+		},
+
+		standalone_enable: {
+			call: function() {
+				return standalone_enable();
+			}
+		},
+
+		standalone_disable: {
+			call: function() {
+				return standalone_disable();
+			}
+		}
 	}
 };

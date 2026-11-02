@@ -14,7 +14,7 @@ BEGIN = "# >>> cf-speedtest >>>"
 END = "# <<< cf-speedtest <<<"
 
 # Read-only snapshot sources for the "already scheduled tasks" panel.
-USER_CRON_DIRS = ("/var/spool/cron/crontabs", "/var/spool/cron")
+USER_CRON_DIRS = ("/var/spool/cron/crontabs", "/var/spool/cron", "/etc/crontabs")
 PERIODIC_DIRS = (
     ("/etc/cron.hourly", "每小时"),
     ("/etc/cron.daily", "每天"),
@@ -37,9 +37,9 @@ def cli_command():
     configured = os.environ.get("CFST_BIN", "")
     if configured:
         return configured
-    installed = "/usr/local/bin/cfst"
-    if os.access(installed, os.X_OK):
-        return installed
+    for installed in ("/usr/local/bin/cfst", "/usr/bin/cfst"):
+        if os.access(installed, os.X_OK):
+            return installed
     # Development fallback: an absolute Python invocation.
     return "%s -m cfspeedtest" % shlex_quote(sys.executable)
 

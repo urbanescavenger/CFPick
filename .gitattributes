@@ -9,3 +9,6 @@
 *.html text eol=lf
 *.service text eol=lf
 debian/cfst text eol=lf
+root/usr/bin/cfst text eol=lf
+root/etc/init.d/cfst text eol=lf
+root/etc/uci-defaults/95-cfst text eol=lf

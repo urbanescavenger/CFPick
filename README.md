@@ -31,10 +31,11 @@
 
 ## UI Pages
 
-Only two entries under LuCI → Services → PassWall Speed Test, similar to Lucky:
+Three entries under LuCI → Services → PassWall Speed Test:
 
 *   **Console**: shows the test status, the standalone console URL and an "Open web console" button; the actual operations happen in the standalone console.
 *   **Settings**: only the console entry settings: enable, port, listen address, username, session timeout, open console and reset password. All speed-test settings and operations live in the console tabs.
+*   **Standalone Engine**: manages the built-in core-based engine (mihomo / Xray-core) added in 2.1, see below.
 
 ## Standalone Web Console
 
@@ -72,6 +73,27 @@ The console calls the same `api_*` management API, so it always shows the same d
     then open the console again to create a new password.
 *   The console is intended for LAN use over plain HTTP. For remote access use a VPN or a TLS reverse proxy; do not expose port 17544 directly to the internet.
 *   Service script: `/etc/init.d/cfst-web`; the port, listen address and username come from the UCI options `web_port`, `web_bind` and `web_user`. Saving the settings reloads the service.
+
+## Standalone Engine (built-in mihomo / Xray-core)
+
+Since 2.1 the package also ships an **engine that does not use PassWall's `run_socks`** (source in `debian/`, installed to `/usr/lib/cf-speedtest`). It starts a local mihomo or Xray-core process, writes each candidate Cloudflare IP into a throw-away core config and probes it with curl through a private SOCKS port. Nodes are maintained as share links; PassWall node `address` fields are never rewritten.
+
+*   **Two cores**: mihomo and Xray-core, selectable. Existing `/usr/bin/mihomo` and `/usr/bin/xray` (usually installed by PassWall) are reused; if missing, the console's "Cores" tab downloads them from GitHub into `/etc/cf-speedtest/state/core`.
+*   **No double proxying**: core outbounds carry `mark 255` (mihomo `routing-mark`, Xray `sockopt.mark`), which matches PassWall's existing `meta mark 255 return` in its OUTPUT chains. Router-local traffic may be globally proxied, but the test stays single-hop: local SOCKS → node. **No PassWall configuration changes are needed.** For cores without mark support (ss/hysteria2), use the Xray core or temporarily add the target IP to `psw_vps` (runtime nftset; no config change, no restart).
+*   **Entry**: LuCI → Services → PassWall Speed Test → **Standalone Engine**. The page can enable/disable the service, start/stop the engine and open the console.
+*   **Standalone console**: `http://<router-ip>:17545/` by default, with a random access token generated on first install. The LuCI button appends `?token=...` automatically. Listen address, port and token live in `/etc/cf-speedtest/config.json` (mode 0600).
+*   **CLI**:
+    ```sh
+    cfst status
+    cfst run start
+    cfst run retest
+    cfst cores
+    cfst update-core --type xray|mihomo|all
+    cfst cron list
+    ```
+    Config, results, history and downloaded cores live in `/etc/cf-speedtest`; logs in `/tmp/log/cf-speedtest`.
+*   **Dependencies**: `python3-light`, `python3-urllib`, `python3-codecs`, `python3-openssl`, `python3-email`, `curl`, `ca-bundle` (installed automatically by the package).
+*   **Scope**: the standalone engine only exports results (`result.csv`, `result.json`, `best.json`). It does not write back to PassWall/hosts/DNS; use the PassWall-based flow above when write-back is needed.
 
 ## Management API
 

@@ -41,6 +41,9 @@ class CoreConfigTests(unittest.TestCase):
         self.assertEqual(payload["proxies"][0]["server"], "9.9.9.9")
         self.assertEqual(payload["proxies"][0]["name"], "cfst")
         self.assertEqual(payload["rules"], ["MATCH,cfst"])
+        # PassWall on OpenWrt returns packets carrying this mark, so the test
+        # core is not proxied a second time by the router's global node.
+        self.assertEqual(payload["routing-mark"], 255)
         self.assertFalse(payload["dns"]["enable"])
 
     def test_write_config(self):
@@ -63,6 +66,16 @@ class CoreConfigTests(unittest.TestCase):
         with self.assertRaises(core.CoreError):
             core.ensure_core({"core": {"path": "/nonexistent/mihomo"}})
 
+    def test_route_mark_can_be_disabled(self):
+        import os
+        from unittest import mock
+        proxy = self.parsed.proxy_for_ip("9.9.9.9")
+        with mock.patch.dict(os.environ, {"CFST_MARK": "0"}):
+            xray = core.build_config(proxy, 48900, core_type="xray")
+            self.assertNotIn("sockopt", xray["outbounds"][0]["streamSettings"])
+            mihomo = core.build_config(proxy, 48900)
+            self.assertNotIn("routing-mark", mihomo)
+
     def test_custom_dns(self):
         payload = core.build_config(self.parsed.proxy_for_ip("9.9.9.9"), 48900,
                                     dns_nameserver="223.5.5.5")
@@ -80,6 +93,7 @@ class CoreConfigTests(unittest.TestCase):
         self.assertEqual(outbound["streamSettings"]["security"], "tls")
         self.assertEqual(outbound["streamSettings"]["tlsSettings"]["serverName"],
                          "edge.example.com")
+        self.assertEqual(outbound["streamSettings"]["sockopt"], {"mark": 255})
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "cfg.json"

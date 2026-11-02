@@ -6,7 +6,7 @@
 				"passwall-speedtest": [
 					"status", "get_log", "get_history", "get_best_result", "list_nodes",
 					"api_ping", "api_status", "api_results", "api_history",
-					"api_nodes", "api_log", "api_tasks"
+					"api_nodes", "api_log", "api_tasks", "standalone_status"
 				]
 			},
 			"uci": [ "passwall-speedtest" ]
@@ -16,7 +16,9 @@
 				"passwall-speedtest": [
 					"start", "start_retest", "stop",
 					"api_run_start", "api_run_retest", "api_run_stop",
-					"api_web_reset"
+					"api_web_reset",
+					"standalone_start", "standalone_stop",
+					"standalone_enable", "standalone_disable"
 				]
 			},
 			"uci": [ "passwall-speedtest" ]

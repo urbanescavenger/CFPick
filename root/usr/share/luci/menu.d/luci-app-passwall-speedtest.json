@@ -27,5 +27,14 @@
 			"type": "view",
 			"path": "passwall-speedtest/settings"
 		}
+	},
+
+	"admin/services/passwall-speedtest/standalone": {
+		"title": "Standalone Engine",
+		"order": 3,
+		"action": {
+			"type": "view",
+			"path": "passwall-speedtest/standalone"
+		}
 	}
 }

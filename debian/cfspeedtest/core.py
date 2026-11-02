@@ -77,6 +77,23 @@ def normalize_type(value):
     return value if value in CORE_TYPES else "mihomo"
 
 
+def _route_mark():
+    """SO_MARK applied to the core's outbound sockets.
+
+    On OpenWrt with PassWall the router's own traffic is transparently
+    proxied unless the socket carries the mark PassWall itself uses
+    (``meta mark 255 return`` in its OUTPUT chains).  Marking our outbound
+    connection keeps the test single-hop: local SOCKS -> node, instead of
+    local SOCKS -> node -> global PassWall node.  On a plain Debian host no
+    rule matches the mark and it is harmless.  ``CFST_MARK=0`` disables it.
+    """
+    try:
+        value = int(os.environ.get("CFST_MARK", "255"))
+    except (TypeError, ValueError):
+        value = 255
+    return value if 0 <= value <= 0xFFFFFFFF else 255
+
+
 def active_type(cfg=None):
     return normalize_type(((cfg or {}).get("core") or {}).get("type"))
 
@@ -88,6 +105,14 @@ def _arch():
 
 def _managed_binary(core_type):
     return paths.CORE_BINARIES[normalize_type(core_type)]
+
+
+# Distribution-provided binaries (OpenWrt/PassWall, Debian packages).  Used
+# only when the managed copy under CFST_STATE_DIR/core is absent.
+_SYSTEM_BINARIES = {
+    "mihomo": ("/usr/bin/mihomo", "/usr/libexec/mihomo-core", "/usr/bin/mihomo-meta"),
+    "xray": ("/usr/bin/xray", "/usr/bin/xray-core"),
+}
 
 
 def _version_file(core_type):
@@ -114,7 +139,16 @@ def core_binary(cfg=None, core_type=None):
         path = Path(str(configured)).expanduser()
         return path if _executable(path) else None
     managed = _managed_binary(chosen)
-    return managed if _executable(managed) else None
+    if _executable(managed):
+        return managed
+    # OpenWrt: PassWall (or another package) may already ship a core.  Reuse
+    # it instead of downloading a second copy; a managed core still wins so
+    # the Web "内核" page can upgrade independently.
+    for candidate in _SYSTEM_BINARIES.get(chosen, ()):
+        path = Path(candidate)
+        if _executable(path):
+            return path
+    return None
 
 
 _version_cache = {}
@@ -395,6 +429,9 @@ def build_mihomo_config(proxy, socks_port, dns_nameserver=""):
         "proxies": [proxy],
         "rules": ["MATCH,cfst"],
     }
+    mark = _route_mark()
+    if mark:
+        config["routing-mark"] = mark
     if dns_nameserver:
         config["dns"] = {
             "enable": True,
@@ -483,6 +520,12 @@ def _xray_stream(proxy, force_tls=False):
         if xhttp.get("extra"):
             xhttp_settings["extra"] = xhttp["extra"]
         stream["xhttpSettings"] = xhttp_settings
+
+    mark = _route_mark()
+    if mark:
+        # Xray outbound-only field: SO_MARK for the socket that connects to
+        # the proxy server.  See _route_mark() for why this matters on OpenWrt.
+        stream["sockopt"] = {"mark": mark}
     return stream
 
 

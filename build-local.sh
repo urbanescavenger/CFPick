@@ -20,10 +20,19 @@ echo "== 版本: $version-r$release =="
 mkdir -p "$pkgdir"
 [ -d htdocs ] && { mkdir -p "$pkgdir/www"; cp -R htdocs/* "$pkgdir/www/"; }
 [ -d root ] && cp -R root/* "$pkgdir/"
-# 包内全是文本文件: sh/uc/js/json/txt 及无扩展名的 init.d/uci-defaults/config
-find "$pkgdir" -type f -exec sed -i 's/\r$//' {} +
+# 独立测速引擎以 debian/ 为唯一源码，打包时复制进来（不在 git 里重复维护）。
+if [ -d debian/cfspeedtest ]; then
+	mkdir -p "$pkgdir/usr/lib/cf-speedtest"
+	cp -R debian/cfspeedtest "$pkgdir/usr/lib/cf-speedtest/"
+	cp -R debian/web "$pkgdir/usr/lib/cf-speedtest/"
+	cp -R debian/data "$pkgdir/usr/lib/cf-speedtest/"
+fi
+# 包内全是文本文件: sh/uc/js/json/txt/py 及无扩展名的 init.d/uci-defaults/config
+find "$pkgdir" -type f ! -path '*/__pycache__/*' -exec sed -i 's/\r$//' {} +
+find "$pkgdir" -type d -name __pycache__ -prune -exec rm -rf {} +
 chmod +x "$pkgdir"/etc/init.d/* "$pkgdir"/etc/uci-defaults/* \
-	"$pkgdir"/www/cfst/cgi-bin/* "$pkgdir"/usr/bin/$pkgname/*.sh 2>/dev/null || true
+	"$pkgdir"/www/cfst/cgi-bin/* "$pkgdir"/usr/bin/$pkgname/*.sh \
+	"$pkgdir"/usr/bin/cfst 2>/dev/null || true
 
 # 2) po→lmo(LF 归一之后生成;lmo 是二进制,勿再 sed)
 if [ -d po ]; then
@@ -43,7 +52,7 @@ mkdir -p "$pkgdir/CONTROL"
 cat > "$pkgdir/CONTROL/control" <<EOF
 Package: $pkgname
 Version: ${version}-${release}
-Depends: libc, curl
+Depends: libc, curl, ca-bundle, python3-light, python3-urllib, python3-codecs, python3-openssl, python3-email
 Architecture: all
 Maintainer: urbanescavenger
 Section: luci
