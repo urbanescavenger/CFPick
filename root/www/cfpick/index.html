@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CFPick 操作台</title>
-<link rel="icon" type="image/svg+xml" href="favicon.svg?v=1.0.11">
-<link rel="icon" href="favicon.ico?v=1.0.11" sizes="any">
+<link rel="icon" type="image/svg+xml" href="favicon.svg?v=1.0.12">
+<link rel="icon" href="favicon.ico?v=1.0.12" sizes="any">
 <meta name="theme-color" content="#2563eb">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -282,6 +282,7 @@
           <label>计划 <span id="cfg-task-add-schedule" class="schedule-host"></span></label>
           <label>任务
             <select id="cfg-task-add-mode">
+              <option value="start">完整测速并写回（start）</option>
               <option value="retest">复测现有最优并写回（retest）</option>
               <option value="test">仅测速，不写回（test）</option>
               <option value="replace">仅写回现有结果（replace）</option>

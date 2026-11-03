@@ -756,8 +756,7 @@ function save_config(req) {
 
 	if (changed) {
 		cur.commit(CONFIG);
-		// The shell script owns the crontab line; reload rewrites it from UCI.
-		system('/etc/init.d/cfpick reload >/dev/null 2>&1');
+		// Scheduled tasks are ordinary crontab lines; no service reload needed.
 		// Removing a node from the worker table must also clear it from every
 		// scheduled task; a task left with an empty selection is deleted.
 		if (length(removed_nodes) > 0) {

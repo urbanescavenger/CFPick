@@ -812,28 +812,71 @@
 		return nodes;
 	}
 
-	function nodeLabel(id) {
+	function passwallNode(id) {
 		const nodes = providerNodes('passwall');
 
 		for (let i = 0; i < nodes.length; i++)
 			if (nodes[i].value === id)
-				return nodes[i].label || id;
+				return nodes[i];
+
+		return null;
+	}
+
+	// A scheduled run is limited by worker, not by every PassWall node: the
+	// workers configured on the 节点 page are the only units the shell tests.
+	function workerLabel(id, worker) {
+		const node = passwallNode(id);
+		let label = node ? (node.label || id) : id;
+
+		if (worker && worker.ip_list)
+			label += ' · ' + worker.ip_list;
+		if (worker && worker.ddns_domain)
+			label += ' · DDNS';
+		if (node && String(node.type || '').toLowerCase() === 'socks')
+			label += '（socks，不能测速）';
+
+		return label;
+	}
+
+	function configuredWorkers() {
+		const list = [];
+		const seen = {};
+
+		(state.workers || []).forEach((worker) => {
+			const id = String(worker.node || '').trim();
+
+			if (!id || seen[id])
+				return;
+
+			seen[id] = true;
+			list.push({
+				id: id,
+				ip_list: worker.ip_list || '',
+				ddns_domain: worker.ddns_domain || ''
+			});
+		});
+
+		return list;
+	}
+
+	function nodeLabel(id) {
+		const workers = state.workers || [];
+
+		for (let i = 0; i < workers.length; i++)
+			if (String(workers[i].node || '') === id)
+				return workerLabel(id, workers[i]);
 
 		return id;
 	}
 
 	function nodeChoices(selected) {
-		const nodes = providerNodes('passwall');
 		const seen = {};
 		const list = [];
 
-		nodes.forEach((node) => {
-			if (!node.value || seen[node.value])
-				return;
-
-			seen[node.value] = true;
-			list.push({ value: node.value, label: node.label || node.value,
-				type: node.type || '', stale: false });
+		configuredWorkers().forEach((worker) => {
+			seen[worker.id] = true;
+			list.push({ value: worker.id, label: workerLabel(worker.id, worker),
+				type: '', stale: false });
 		});
 
 		(selected || []).forEach((name) => {
@@ -879,7 +922,7 @@
 		});
 
 		if (!list.childNodes.length)
-			list.appendChild(el('span', { class: 'muted' }, '还没有 PassWall 节点'));
+			list.appendChild(el('span', { class: 'muted' }, '还没有配置 worker；请先在「节点」页添加'));
 
 		details.appendChild(summary);
 		details.appendChild(list);
@@ -1006,14 +1049,13 @@
 		if (!body)
 			return;
 
-		const entries = ((state.tasks && state.tasks.entries) || [])
-			.filter((entry) => !entry.managed);
+		const entries = (state.tasks && state.tasks.entries) || [];
 
 		body.replaceChildren();
 
 		if (!entries.length) {
 			body.appendChild(el('tr', {}, [
-				el('td', { colspan: editable ? '6' : '5', class: 'empty' }, '暂无其他定时任务')
+				el('td', { colspan: editable ? '6' : '5', class: 'empty' }, '暂无定时任务')
 			]));
 			return;
 		}
@@ -1058,9 +1100,10 @@
 			let taskSelect = null;
 			let taskCell;
 
-			if (detected && detected.mode !== 'start') {
+			if (detected) {
 				taskSelect = el('select', { class: 'task-mode' });
 				[
+					['start', '完整测速并写回（start）'],
 					['retest', '复测现有最优并写回（retest）'],
 					['test', '仅测速，不写回（test）'],
 					['replace', '仅写回现有结果（replace）']
@@ -1086,15 +1129,18 @@
 				nodeCell = el('td', { class: 'muted' }, '—');
 			}
 
+			const actions = el('div', { class: 'task-actions' });
 			const save = el('button', { type: 'button', class: 'btn small primary' }, '保存');
 			save.disabled = !writable;
 			save.addEventListener('click', () => saveTask(entry, schedule._scheduleValue(),
 				enabled.checked, taskSelect ? taskSelect.value : '',
 				nodePicker ? nodePicker._nodeValues() : null));
+			actions.appendChild(save);
 
 			const remove = el('button', { type: 'button', class: 'btn small danger' }, '删除');
 			remove.disabled = !writable;
 			remove.addEventListener('click', () => deleteTask(entry));
+			actions.appendChild(remove);
 
 			body.appendChild(el('tr', {}, [
 				el('td', {}, enabled),
@@ -1102,7 +1148,7 @@
 				taskCell,
 				nodeCell,
 				el('td', { class: 'cmd' }, entry.command || ''),
-				el('td', {}, [el('div', { class: 'task-actions' }, [save, remove])])
+				el('td', {}, actions)
 			]));
 		});
 	}
@@ -1454,6 +1500,12 @@
 		renderWorkers();
 		fillThirdParty();
 		updateSourceVisibility();
+
+		// Worker rows are the selectable units for scheduled tasks; redraw the
+		// task list and add form both after the worker table is rebuilt.
+		if (state.tasks)
+			renderTasks();
+		mountNodePicker('cfg-task-add-nodes', addNodePickerValues());
 	}
 
 	// Normalize full-width digits/spaces from Chinese IMEs before sending a
@@ -1530,21 +1582,19 @@
 		if (!stableNode)
 			throw new Error('请选择稳定节点（测速期间用于承载实流量）');
 
-		// The schedule is edited in the task list, which writes UCI for the
-		// managed "start" line.  Reuse its current values so saving the rest
-		// of the settings page does not restore a stale schedule.
+		// Scheduled tasks are ordinary crontab lines now.  The UCI cron fields
+		// below are legacy (kept so old configs round-trip); they no longer
+		// generate or own any task.
 		const globalCfg = (state.config && state.config.global) || {};
-		const managed = (state.tasks && state.tasks.managed) || null;
-		const cron = normalizeCronText((managed && managed.schedule) ||
-			globalCfg.custom_cron || '0 3 * * *');
+		const cron = normalizeCronText(globalCfg.custom_cron || '0 3 * * *');
 
 		if (!/^([0-9A-Za-z*,/-]+\s+){4}[0-9A-Za-z*,/-]+$/.test(cron) &&
 			!/^@(reboot|hourly|daily|weekly|monthly|yearly|annually|midnight)$/.test(cron))
-			throw new Error('主任务计划无效，请在定时任务列表中修正');
+			throw new Error('定时任务计划无效');
 
 		return {
 			global: {
-				enabled: managed ? managed.enabled : (globalCfg.enabled === '1'),
+				enabled: globalCfg.enabled === '1',
 				ip_source: textValue('cfg-ip-source') || 'builtin_ipv4',
 				ip_online_url: textValue('cfg-ip-online-url'),
 				custom_ip_file: textValue('cfg-custom-ip-file'),
@@ -1730,7 +1780,8 @@
 
 		$('#btn-start').addEventListener('click', () => runAction('start', '已开始测速'));
 		$('#btn-retest').addEventListener('click', () => runAction('retest', '已开始复测'));
-		$('#btn-stop').addEventListener('click', () => runAction('stop', '已请求停止'));
+		$('#btn-stop').addEventListener('click', () => runAction('stop',
+			'已请求停止：各任务停止探测，随后按各自候选完成下载与写回'));
 
 		$('#btn-sa-refresh').addEventListener('click', () => {
 			refreshStandalone().catch((e) => toast(e.message || '刷新失败', true));

@@ -106,32 +106,27 @@ class ListTasksTests(unittest.TestCase):
                 mock.patch.object(cron.shutil, "which", return_value=which):
             return cron.list_tasks()
 
-    def test_managed_block(self):
+    def test_legacy_block_lists_as_normal_tasks(self):
         text = (cron.BEGIN + "\n"
                 "0 3 * * * /usr/local/bin/cfpick run start >/dev/null 2>&1\n"
                 + cron.END + "\n")
         data = self._snapshot(text)
         self.assertTrue(data["installed"])
-        self.assertEqual(data["managed"],
-                         {"enabled": True,
-                          "line": "0 3 * * * /usr/local/bin/cfpick run start "
-                                  ">/dev/null 2>&1"})
+        self.assertNotIn("managed", data)
         self.assertEqual(len(data["entries"]), 1)
-        self.assertTrue(data["entries"][0]["managed"])
         self.assertEqual(data["entries"][0]["source"], "root")
         self.assertEqual(data["errors"], [])
         self.assertTrue(data["writable"])
         self.assertTrue(data["run_command"].endswith(" run"))
         self.assertEqual(len(data["tasks"]), 1)
-        self.assertTrue(data["tasks"][0]["managed"])
         self.assertEqual(data["tasks"][0]["schedule"], "0 3 * * *")
+        self.assertNotIn("managed", data["tasks"][0])
 
     def test_empty_crontab(self):
         data = self._snapshot("")
         self.assertTrue(data["installed"])
-        self.assertFalse(data["managed"]["enabled"])
-        self.assertEqual(data["managed"]["line"], "")
         self.assertEqual(data["entries"], [])
+        self.assertEqual(data["tasks"], [])
 
     def test_missing_crontab_reports_error(self):
         with mock.patch.object(cron, "_read_crontab",
@@ -142,7 +137,7 @@ class ListTasksTests(unittest.TestCase):
                 mock.patch.object(cron.shutil, "which", return_value=None):
             data = cron.list_tasks()
         self.assertFalse(data["installed"])
-        self.assertFalse(data["managed"]["enabled"])
+        self.assertEqual(data["tasks"], [])
         self.assertIn("未安装 crontab", data["errors"][0])
 
 
@@ -167,7 +162,7 @@ class TaskModelTests(unittest.TestCase):
         self.assertIsNone(cron.parse_task("# plain comment", "root"))
         self.assertIsNone(cron.parse_task("SHELL=/bin/sh", "root"))
 
-    def test_collect_related_marks_managed(self):
+    def test_collect_related_ignores_legacy_markers(self):
         text = "\n".join([
             cron.BEGIN,
             "0 3 * * * /usr/local/bin/cfpick run start >/dev/null 2>&1",
@@ -176,8 +171,11 @@ class TaskModelTests(unittest.TestCase):
             "0 5 * * * /usr/bin/other",
         ])
         tasks = cron._collect_related(text, "root", writable=True)
-        self.assertEqual([task["managed"] for task in tasks], [True, False])
-        self.assertEqual(tasks[1]["command"], "/usr/local/bin/cfpick run test")
+        self.assertEqual([task["command"] for task in tasks], [
+            "/usr/local/bin/cfpick run start >/dev/null 2>&1",
+            "/usr/local/bin/cfpick run test",
+        ])
+        self.assertTrue(all("managed" not in task for task in tasks))
 
 
 class TaskWriteTests(unittest.TestCase):
@@ -225,10 +223,13 @@ class TaskWriteTests(unittest.TestCase):
                       "0 4 * * * /usr/local/bin/cfpick run retest",
                       self.written.splitlines())
 
-    def test_save_refuses_managed_task(self):
+    def test_save_updates_legacy_block_line(self):
         first, second = self._patches()
-        with first, second, self.assertRaises(cron.CronError):
-            cron.save_task(self.lines[1], "0 3 * * *", enabled=True)
+        with first, second:
+            cron.save_task(self.lines[1], "0 4 * * *", enabled=True)
+        self.assertIn(
+            "0 4 * * * /usr/local/bin/cfpick run start >/dev/null 2>&1",
+            self.written.splitlines())
 
     def test_delete_removes_task(self):
         first, second = self._patches()
@@ -311,15 +312,15 @@ class TaskWriteTests(unittest.TestCase):
         self.assertIn("0 4 * * * /usr/local/bin/cfpick run retest --node=new",
                       self.written.splitlines())
 
-    def test_prune_skips_managed_block(self):
+    def test_prune_updates_legacy_block_task(self):
         self.lines[1] = ("0 3 * * * /usr/local/bin/cfpick run start "
-                         "--node=a >/dev/null 2>&1")
+                         "--node=a --node=b >/dev/null 2>&1")
         first, second = self._patches()
         with first, second:
             report = cron.prune_nodes(["a"])
-        self.assertEqual(report["removed"], [])
-        # The managed block is owned by apply(); prune must not rewrite it.
-        self.assertEqual(self.written, "")
+        self.assertEqual(report["removed"], ["a"])
+        self.assertIn("0 3 * * * /usr/local/bin/cfpick run start "
+                      "--node=b >/dev/null 2>&1", self.written.splitlines())
 
 
 if __name__ == "__main__":

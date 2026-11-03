@@ -667,19 +667,10 @@ class Handler(BaseHTTPRequestHandler):
         removed_nodes, node_renames = _node_changes(previous, normalized)
 
         warnings = _config_warnings(normalized)
-        incoming_schedule = incoming.get("schedule") if isinstance(incoming.get("schedule"), dict) else {}
-        incoming_cron = str(incoming_schedule.get("custom_cron") or "").strip()
-        if (incoming_schedule.get("custom_enabled") and incoming_cron
-                and not config.valid_cron(incoming_cron)):
-            warnings.append(
-                "定时 cron 表达式「%s」无效，已回退为 %s；格式为 分 时 日 月 星期"
-                % (incoming_cron, normalized["schedule"]["custom_cron"]))
         saved = config.save(normalized)
+        # Scheduled tasks are ordinary crontab lines; the old UCI/JSON
+        # schedule fields are legacy and no longer generate a task.
         cron_error = ""
-        try:
-            cron.apply(saved.get("schedule", {}))
-        except cron.CronError as exc:
-            cron_error = str(exc)
         # Mirror the same cleanup in the editable related tasks, so no task
         # silently keeps a reference to a node that no longer exists.
         if removed_nodes or node_renames:

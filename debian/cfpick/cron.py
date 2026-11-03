@@ -181,29 +181,15 @@ def parse_task(raw, source, writable=False):
         "nodes": command_nodes(command),
         "disabled": disabled,
         "writable": bool(writable),
-        "managed": False,
     }
-
-
-def _is_start_command(command):
-    return bool(re.search(r"\bcfpick(?:\.sh)?\s+(?:run\s+)?start\b", command or ""))
 
 
 def _collect_related(text, source, writable=False):
     tasks = []
-    inside = False
     for raw in text.splitlines():
-        stripped = raw.strip()
-        if stripped == BEGIN:
-            inside = True
-            continue
-        if stripped == END:
-            inside = False
-            continue
         entry = parse_task(raw, source, writable=writable)
         if entry is None or not entry["related"]:
             continue
-        entry["managed"] = inside and _is_start_command(entry["command"])
         tasks.append(entry)
     return tasks
 
@@ -222,23 +208,15 @@ def _user_task(line):
     if not target:
         raise CronError("缺少任务行")
     lines = _read_crontab().splitlines()
-    inside = False
     for index, raw in enumerate(lines):
         stripped = raw.strip()
-        if stripped == BEGIN:
-            inside = True
-            continue
-        if stripped == END:
-            inside = False
+        if stripped in (BEGIN, END):
             continue
         if stripped != target:
             continue
         entry = parse_task(raw, _current_user() or "当前用户", writable=True)
         if entry is None or not entry["related"]:
             raise CronError("只能修改本程序相关的任务")
-        entry["managed"] = inside and _is_start_command(entry["command"])
-        if entry["managed"]:
-            raise CronError("主定时任务由「启用定时测速」维护，请在该处修改")
         return lines, index, entry
     raise CronError("任务已被修改，请刷新后重试")
 
@@ -289,8 +267,7 @@ def _replace_mode(command, mode):
     match = _MODE_RE.match(command or "")
     if match is None:
         raise CronError("该任务不支持修改任务类型")
-    if match.group(3) == "start":
-        raise CronError("主定时任务由「启用定时测速」维护，请在该处修改")
+    # 所有任务都是普通 crontab 行，start/retest/test/replace 可以互相切换。
     return match.group(1) + match.group(2) + "run " + mode + match.group(4)
 
 
@@ -348,11 +325,6 @@ def prune_nodes(changed, renames=None):
             continue
         if stripped == END:
             inside = False
-            kept.append(raw)
-            continue
-        # The managed block is rebuilt from the config by crontab_apply(), so
-        # pruning it here would only conflict with that write.
-        if inside:
             kept.append(raw)
             continue
         entry = parse_task(raw, _current_user() or "当前用户", writable=True)
@@ -476,21 +448,21 @@ def apply(settings):
 
 
 def current():
+    """First enabled related task, for the status card.
+
+    Scheduled tasks are ordinary crontab lines; there is no managed block.
+    """
     try:
         lines = _read_crontab().splitlines()
     except CronError:
         return {"installed": False, "line": ""}
-    inside = False
     found = ""
     for line in lines:
-        if line.strip() == BEGIN:
-            inside = True
+        entry = parse_task(line, "", writable=False)
+        if entry is None or not entry["related"] or entry["disabled"]:
             continue
-        if line.strip() == END:
-            inside = False
-            continue
-        if inside and line.strip() and not found:
-            found = line.strip()
+        found = entry["line"]
+        break
     return {"installed": bool(found), "line": found}
 
 
@@ -643,15 +615,8 @@ def list_tasks():
         del entries[MAX_ENTRIES:]
         errors.append("任务过多，仅显示前 %d 项" % MAX_ENTRIES)
 
-    managed_task = next((task for task in tasks if task["managed"]), None)
-    managed_line = managed_task["line"] if managed_task else ""
-
     return {
         "installed": installed,
-        "managed": {
-            "enabled": bool(managed_task) and not managed_task["disabled"],
-            "line": managed_line,
-        },
         "entries": entries,
         "tasks": tasks,
         "writable": writable,

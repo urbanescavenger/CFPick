@@ -151,6 +151,8 @@ main { padding: 22px clamp(16px, 4vw, 40px); max-width: 1280px; margin: 0 auto; 
   margin-bottom: 12px;
 }
 .card-head h2 { margin-right: auto; }
+.card-head h3 { margin-right: auto; font-size: 1rem; }
+.card-subhead { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border); }
 .card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .muted { color: var(--muted); font-size: 0.82rem; }
 .error { color: var(--danger); font-size: 0.82rem; min-height: 1em; }
@@ -178,6 +180,7 @@ table.data td.ip { font-family: var(--mono); }
 .cron-table td.cron-command { white-space: normal; word-break: break-all; min-width: 260px; }
 .cron-table td.cron-raw { color: var(--muted); white-space: pre-wrap; word-break: break-all; }
 .cron-table td { vertical-align: middle; }
+.cron-table td .schedule-editor { flex-wrap: nowrap; min-width: 206px; }
 .cron-table .row-actions { display: flex; gap: 6px; }
 .schedule-host { display: block; }
 .schedule-editor { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }

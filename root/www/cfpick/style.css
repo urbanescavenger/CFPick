@@ -194,6 +194,9 @@ table.data td input.regions { min-width: 150px; font-family: var(--mono); }
 /* structured schedule editor (frequency + fixed time) */
 .schedule-host { display: block; }
 .schedule-editor { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+/* In the task table keep 频率 + 时间 on one line; the table scrolls if the
+   card is too narrow instead of stacking the controls. */
+table.data td .schedule-editor { flex-wrap: nowrap; min-width: 206px; }
 .schedule-editor select,
 .schedule-editor input { width: auto; min-height: 32px; padding: 5px 8px; font-size: 0.8rem; }
 .schedule-editor .sched-mode { min-width: 108px; }

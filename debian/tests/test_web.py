@@ -132,7 +132,7 @@ class WebTests(unittest.TestCase):
     def test_app_update_api(self):
         status, data = self.request("/api/app")
         self.assertEqual(status, 200)
-        self.assertEqual(data["version"], "1.0.11")
+        self.assertEqual(data["version"], "1.0.12")
         self.assertIn("source_dir", data)
         self.assertIn("update", data)
         self.assertFalse(data["manageable"])
@@ -143,9 +143,8 @@ class WebTests(unittest.TestCase):
         status, data = self.request("/api/cron")
         self.assertEqual(status, 200)
         self.assertIn("installed", data)
-        self.assertIn("managed", data)
-        self.assertIn("enabled", data["managed"])
-        self.assertIn("line", data["managed"])
+        # Tasks are ordinary crontab lines; no managed/main-task concept.
+        self.assertNotIn("managed", data)
         self.assertIsInstance(data["entries"], list)
         self.assertIn("tasks", data)
         self.assertIsInstance(data["tasks"], list)
@@ -233,7 +232,9 @@ class WebTests(unittest.TestCase):
                                     payload={"config": cfg})
         self.assertEqual(status, 200)
         self.assertEqual(data["config"]["schedule"]["custom_cron"], "0 3 * * *")
-        self.assertTrue(any("cron" in warning for warning in data["warnings"]))
+        # The legacy schedule fields are inert now: saving must not warn or
+        # regenerate any cron task from them.
+        self.assertFalse(any("cron" in warning for warning in data["warnings"]))
 
         fixed = data["config"]
         fixed["schedule"]["custom_cron"] = "15 4 * * 1"

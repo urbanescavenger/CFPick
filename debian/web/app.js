@@ -156,7 +156,7 @@
 			refreshAppInfo();
 		} else if (name === 'nodes') {
 			refreshNodeInfo();
-		} else if (name === 'settings') {
+		} else if (name === 'settings' || name === 'overview') {
 			refreshCronTasks();
 		}
 	}
@@ -708,6 +708,7 @@
 		['custom', '自定义'],
 	];
 	const TASK_MODES = [
+		['start', '完整测速并写回（start）'],
 		['retest', '复测现有最优并写回（retest）'],
 		['test', '仅测速，不写回（test）'],
 		['replace', '仅写回现有结果（replace）'],
@@ -1011,8 +1012,9 @@
 		if (!body) return;
 		body.replaceChildren();
 
-		// The managed start task is maintained by the schedule editor above.
-		const tasks = ((data && data.tasks) || []).filter((entry) => !entry.managed);
+		// Every task is an ordinary crontab line; there is no managed main
+		// task to hide or special-case.
+		const tasks = (data && data.tasks) || [];
 		tasks.forEach((entry) => {
 			const writable = !!entry.writable;
 			const tr = document.createElement('tr');
@@ -1036,7 +1038,7 @@
 			const taskCell = document.createElement('td');
 			const detected = taskMode(entry.command);
 			let taskSelect = null;
-			if (detected && detected.mode !== 'start') {
+			if (detected) {
 				taskSelect = document.createElement('select');
 				taskSelect.className = 'task-mode';
 				TASK_MODES.forEach(([value, label]) => {
@@ -1116,9 +1118,69 @@
 			body.appendChild(tr);
 		}
 
-		const managed = data && data.managed;
-		setText('cron-note', managed && managed.line ? '主任务已启用' : '主任务未启用');
+		setText('cron-note', tasks.length ? (tasks.length + ' 个任务') : '暂无任务');
 		setText('cron-errors', ((data && data.errors) || []).join('；'));
+		renderOverviewCronTasks(tasks);
+	}
+
+	// The overview copy is read-only apart from enable/disable, matching the
+	// LuCI console: every other edit lives on the Settings tab.
+	function renderOverviewCronTasks(tasks) {
+		const body = $('#ov-cron-body');
+		if (!body) return;
+		body.replaceChildren();
+
+		if (!tasks.length) {
+			const tr = document.createElement('tr');
+			const td = document.createElement('td');
+			td.colSpan = 5;
+			td.className = 'empty';
+			td.textContent = '暂无其他定时任务';
+			tr.appendChild(td);
+			body.appendChild(tr);
+			return;
+		}
+
+		tasks.forEach((entry) => {
+			const tr = document.createElement('tr');
+
+			const stateCell = document.createElement('td');
+			const toggle = document.createElement('button');
+			toggle.type = 'button';
+			toggle.className = 'btn small' + (entry.disabled ? '' : ' primary');
+			toggle.textContent = entry.disabled ? '启用' : '停用';
+			toggle.disabled = !entry.writable;
+			toggle.addEventListener('click', () => {
+				const detected = taskMode(entry.command);
+				// entry.disabled === true means the next click enables it.
+				saveCronTask(entry, entry.schedule, entry.disabled,
+					detected ? detected.mode : '',
+					detected ? (entry.nodes || []) : null);
+			});
+			stateCell.appendChild(toggle);
+			tr.appendChild(stateCell);
+
+			const scheduleCell = document.createElement('td');
+			scheduleCell.className = 'mono';
+			scheduleCell.textContent = entry.schedule || '—';
+			tr.appendChild(scheduleCell);
+
+			const taskCell = document.createElement('td');
+			taskCell.textContent = taskLabel(entry.command);
+			tr.appendChild(taskCell);
+
+			const nodeCell = document.createElement('td');
+			nodeCell.textContent = (entry.nodes && entry.nodes.length)
+				? entry.nodes.join('、') : '全部节点';
+			tr.appendChild(nodeCell);
+
+			const commandCell = document.createElement('td');
+			commandCell.className = 'mono cron-command';
+			commandCell.textContent = entry.command || '';
+			tr.appendChild(commandCell);
+
+			body.appendChild(tr);
+		});
 	}
 
 	async function refreshCronTasks() {
@@ -1130,25 +1192,6 @@
 	}
 
 	// ── settings form ───────────────────────────────────────────────────
-	const CRON_FIELDS = ['schedule_minute', 'schedule_hour', 'schedule_day',
-		'schedule_month', 'schedule_weekday'];
-	const CRON_LABELS = {
-		schedule_minute: '分钟',
-		schedule_hour: '小时',
-		schedule_day: '日',
-		schedule_month: '月',
-		schedule_weekday: '星期',
-	};
-	const CRON_PRESETS = {
-		hourly: '0 * * * *',
-		'half-hourly': '*/30 * * * *',
-		'6h': '0 */6 * * *',
-		'12h': '0 */12 * * *',
-		daily: '0 3 * * *',
-		weekly: '0 3 * * 1',
-		monthly: '0 3 1 * *',
-	};
-
 	function normalizeCronText(value) {
 		// Chinese IMEs in full-width mode turn "12" into "１２", which looks
 		// like "1 2" and would fail cron validation.  Convert to half-width.
@@ -1156,73 +1199,6 @@
 			.replace(/[！-～]/g,
 				(ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
 			.replace(/　/g, ' ');
-	}
-
-	function cronParts() {
-		return CRON_FIELDS.map((id) => {
-			const node = $('#' + id);
-			return node ? normalizeCronText(node.value).trim() : '';
-		});
-	}
-
-	function setCronParts(expression) {
-		const parts = String(expression || '').trim().split(/\s+/);
-		CRON_FIELDS.forEach((id, index) => {
-			const node = $('#' + id);
-			if (node) node.value = normalizeCronText(parts[index] || '*');
-		});
-	}
-
-	function cronExpression() {
-		return cronParts().map((part) => part || '*').join(' ');
-	}
-
-	function updateCronPreview() {
-		const parts = cronParts();
-		const hasSpace = parts.some((part) => /\s/.test(part));
-		setText('schedule-preview', parts.map((part) => part || '*').join(' ') +
-			(hasSpace ? '   ⚠ 字段内不要用空格，多个值请用逗号' : ''));
-	}
-
-	function cronFieldError() {
-		const parts = cronParts();
-		for (let index = 0; index < parts.length; index += 1) {
-			const label = CRON_LABELS[CRON_FIELDS[index]];
-			const value = parts[index];
-			if (!value) return label + '不能为空';
-			if (/\s/.test(value))
-				return label + '字段不能包含空格；多个值请用逗号分隔，例如 1,2';
-			if (!/^[0-9A-Za-z*,/-]+$/.test(value))
-				return label + '字段包含不支持的字符（请用半角数字/字母）';
-		}
-		return '';
-	}
-
-	function matchCronPreset(expression) {
-		const normalized = String(expression || '').trim().replace(/\s+/g, ' ');
-		for (const key of Object.keys(CRON_PRESETS)) {
-			if (CRON_PRESETS[key] === normalized) return key;
-		}
-		return 'custom';
-	}
-
-	function applySchedulePreset() {
-		const select = $('#schedule_preset');
-		const expression = select ? CRON_PRESETS[select.value] : '';
-		if (!expression) return;
-		setCronParts(expression);
-		updateCronPreview();
-	}
-
-	function onCronInput(event) {
-		const node = event && event.currentTarget;
-		if (node) {
-			const normalized = normalizeCronText(node.value);
-			if (normalized !== node.value) node.value = normalized;
-		}
-		const select = $('#schedule_preset');
-		if (select) select.value = matchCronPreset(cronExpression());
-		updateCronPreview();
 	}
 
 	function fillSettings(cfg) {
@@ -1257,18 +1233,8 @@
 		set('ddns_ip_count', ddns.ip_count);
 		set('ddns_ttl', ddns.ttl);
 		check('ddns_proxied', cloudflare.proxied);
-		check('schedule_enabled', cfg.schedule.enabled);
 		// The add form starts with no selection (= all nodes) after a reload.
 		mountNodePicker('cron-add-nodes', []);
-		// Older configs selected between an hour interval and a raw expression.
-		// Show the expression that is actually in effect, then always save the
-		// structured five-field form.
-		let cronExpr = cfg.schedule.custom_cron || '0 3 * * *';
-		if (!cfg.schedule.custom_enabled && cfg.schedule.hour)
-			cronExpr = '0 */' + cfg.schedule.hour + ' * * *';
-		setCronParts(cronExpr);
-		if ($('#schedule_preset')) $('#schedule_preset').value = matchCronPreset(cronExpr);
-		updateCronPreview();
 		if ($('#core-type')) $('#core-type').value = cfg.core.type;
 		set('core_dns', cfg.core.dns_nameserver);
 		set('web_listen', cfg.web.listen);
@@ -1321,16 +1287,6 @@
 				zone_name: text('ddns_zone_name'),
 				proxied: check('ddns_proxied'),
 			}),
-		});
-		const parts = cronParts();
-		const cronError = cronFieldError();
-		if (cronError) throw new Error(cronError);
-		cfg.schedule = Object.assign({}, cfg.schedule, {
-			enabled: check('schedule_enabled'),
-			custom_enabled: true,
-			custom_cron: parts.join(' '),
-			// Kept for older readers; custom_enabled=true makes it unused.
-			hour: (cfg.schedule && cfg.schedule.hour) || 24,
 		});
 		const corePaths = Object.assign({}, (cfg.core && cfg.core.paths) || {});
 		$$('#core-cards input[data-core-path]').forEach((input) => {
@@ -1833,11 +1789,6 @@
 			saveConfig('设置已保存');
 		});
 		$('#ip_source').addEventListener('change', updateFieldVisibility);
-		$('#schedule_preset').addEventListener('change', applySchedulePreset);
-		CRON_FIELDS.forEach((id) => {
-			const node = $('#' + id);
-			if (node) node.addEventListener('input', onCronInput);
-		});
 		$('#btn-cron-refresh').addEventListener('click', refreshCronTasks);
 		mountScheduleEditor('cron-add-schedule', '0 3 * * *');
 		mountNodePicker('cron-add-nodes', []);
