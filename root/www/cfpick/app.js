@@ -1284,6 +1284,7 @@
 		setValue('cfg-dl-time', g.download_test_time);
 		setCheck('cfg-iter-enabled', g.iterate_enabled);
 		setValue('cfg-iter-minutes', g.iterate_minutes);
+		setValue('cfg-iter-converge', g.iterate_converge_count);
 		setCheck('cfg-ddns-enabled', g.ddns_enabled);
 		setValue('cfg-ddns-count', g.ddns_ip_count);
 		setValue('cfg-ddns-ttl', g.ddns_ttl);
@@ -1405,6 +1406,7 @@
 				download_test_time: intValue('cfg-dl-time', 10),
 				iterate_enabled: checkValue('cfg-iter-enabled'),
 				iterate_minutes: intValue('cfg-iter-minutes', 30),
+				iterate_converge_count: intValue('cfg-iter-converge', 5),
 				ddns_enabled: checkValue('cfg-ddns-enabled'),
 				ddns_ip_count: intValue('cfg-ddns-count', 1),
 				ddns_ttl: intValue('cfg-ddns-ttl', 300),
