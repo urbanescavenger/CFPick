@@ -744,3 +744,15 @@ msgstr "检查更新失败"
 
 msgid "Check the latest GitHub release; the update button is enabled only when a newer version is available."
 msgstr "检查 GitHub 最新 Release；只有存在新版本时「在线更新」才可用。"
+
+msgid "Not checked yet."
+msgstr "尚未检查"
+
+msgid "Update finished"
+msgstr "更新完成"
+
+msgid "Refresh the page to use the new version."
+msgstr "刷新页面以使用新版本。"
+
+msgid "Update failed"
+msgstr "更新失败"

@@ -819,7 +819,8 @@ function dispatch(req) {
 			source: clean_text(body.source, 64),
 			line: clean_text(body.line, 1024),
 			schedule: clean_text(body.schedule, 128),
-			enabled: enabled
+			enabled: enabled,
+			mode: clean_text(body.mode, 16)
 		}));
 	}
 	else if (action == 'task_delete' && method == 'POST') {
