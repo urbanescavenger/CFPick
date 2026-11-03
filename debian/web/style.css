@@ -213,6 +213,9 @@ table.data td.ip { font-family: var(--mono); }
 }
 .node-picker-list label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 500; }
 .cron-table td .node-picker { min-width: 150px; }
+/* 国家码多选：沿用 node-picker 的交互，选项排两列，少滚动。 */
+.country-picker { min-width: 150px; }
+.country-picker .node-picker-list { grid-template-columns: repeat(2, minmax(96px, 1fr)); min-width: 240px; }
 table.data tr.best td { font-weight: 600; }
 table.data .empty, .empty-note { color: var(--muted); text-align: center; padding: 22px; }
 .hidden { display: none !important; }
