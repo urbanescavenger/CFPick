@@ -79,6 +79,20 @@ class NormalizeTests(unittest.TestCase):
         for expression in invalid:
             self.assertFalse(config.valid_cron(expression), expression)
 
+    def test_schedule_nodes_selection(self):
+        nodes = [
+            {"name": "jp", "link": "vless://u@1.1.1.1:443#jp"},
+            {"name": "hk", "link": "vless://u@2.2.2.2:443#hk"},
+        ]
+        cfg = config.normalize({"nodes": nodes, "schedule": {"nodes": ["hk", "gone", "hk"]}})
+        # Unknown/deleted nodes are dropped, duplicates collapse.
+        self.assertEqual(cfg["schedule"]["nodes"], ["hk"])
+        # Empty/absent means every node.
+        self.assertEqual(config.normalize({"nodes": nodes})["schedule"]["nodes"], [])
+        # A comma-separated string is accepted too.
+        cfg = config.normalize({"nodes": nodes, "schedule": {"nodes": "jp, hk"}})
+        self.assertEqual(cfg["schedule"]["nodes"], ["jp", "hk"])
+
     def test_schedule_defaults_and_legacy_interval(self):
         default = config.normalize({})
         self.assertTrue(default["schedule"]["custom_enabled"])

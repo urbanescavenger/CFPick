@@ -40,7 +40,10 @@ Python3 标准库实现的 Web 可视化页面。
   历史延迟折线图（Chart.js 本地内置，带 tooltip/点击详情）、增量日志、内核管理。
 * **结果导出**：`result.csv`、`result.json`、`best.json`；自动滚动保留 10 份 CSV，
   持久历史 `history.csv`（5000 行上限）。
-* **定时任务**：保存配置时幂等写入 root crontab，只维护带 `cfpick` 标记的块。
+* **定时任务**：保存配置时幂等写入 root crontab，只维护带 `cfpick` 标记的主任务块；
+  Web 面板另可维护其它与本程序相关的任务（改计划/类型、选节点、启停、增删）。
+  任务可以限定只跑部分节点，**不选节点 = 全部已启用节点**；删除节点时会同步清理
+  任务里的节点引用（选择因此变空的任务会被删除，主任务则停用，避免静默扩大成全部节点）。
 * **可选 Cloudflare DDNS**：每个节点可单独填写一个域名，测速结束后把该节点的最优 IP
   写入域名的 A/AAAA 记录；未填写域名的节点只测速，不碰 DNS。默认关闭，详见下文。
 * **单实例锁**：定时重叠、页面连点、SSH 手敲同时触发时只跑一个；残留锁自动接管。
@@ -218,7 +221,7 @@ sudo cfpick update-core --type all      # 两个都装
 | 概览 | 运行状态、全局最优、内核版本、定时任务、按节点分组的最优 IP、历史趋势图、完整结果表、CSV/JSON 下载 |
 | 节点 | 分享链接、名称、启用开关、每节点的 CM 列表指派、每节点的 DDNS 域名、解析状态 |
 | IP 列表 | 五个在线 CM 列表的启用/名称/国家码/端口 |
-| 设置 | 候选来源、延迟与丢包阈值、探测参数、下载实测、限时迭代、定时任务、DDNS、已设置任务（只读 cron 全览）、内核路径/DNS、Web 监听与访问令牌 |
+| 设置 | 候选来源、延迟与丢包阈值、探测参数、下载实测、限时迭代、定时任务、DDNS、已设置任务（相关任务可编辑）、内核路径/DNS、Web 监听与访问令牌 |
 | 日志 | 增量拉取运行日志，2 秒自动刷新，自动滚动，下载日志 |
 | 内核 | 选择当前内核（mihomo / Xray），分别查看版本/路径/来源，按卡片安装或升级（可填版本标签），设置每个内核的自定义二进制路径；底部「程序更新」可在线拉取代码并重启 Web |
 
@@ -239,6 +242,7 @@ sudo cfpick update-core --type all      # 两个都装
 cfpick run start          # 完整一轮：下载候选 → 延迟初筛 → 下载实测 → 导出
 cfpick run retest         # 复测现有 result.csv 中的候选，不下载在线列表
 cfpick run replace        # 仅重新导出当前结果（CSV/JSON）
+cfpick run start --node 日本 --node 香港   # 只跑指定节点（可重复；不写 = 全部节点）
 cfpick status             # JSON：运行状态、阶段、最优 IP、内核版本、定时任务
 cfpick config             # 打印当前配置
 cfpick nodes              # 列出节点并校验链接
@@ -299,6 +303,7 @@ cfpick serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 | `schedule.custom_cron` | `0 3 * * *` | 标准五段 cron：分 时 日 月 星期；Web 保存时由五个输入框合成 |
 | `schedule.custom_enabled` | `true` | true 时使用 `custom_cron`；旧配置只有 `hour`、没有这个字段时按间隔处理 |
 | `schedule.hour` | `24` | 旧版「间隔小时」，仅在 `custom_enabled=false` 时生效 |
+| `schedule.nodes` | `[]` | 定时测速限定的节点名列表；空 = 全部已启用节点。删除/改名节点时自动同步 |
 | `web.listen` / `web.port` | `127.0.0.1:8787` | Web 监听；修改后需重启服务 |
 | `web.token` | 空 | API 访问令牌；空 = 不校验 |
 | `export.csv` / `export.json` | `true` | 是否提供对应格式的下载（CSV 仍会写入内部结果文件） |
@@ -335,6 +340,18 @@ cfpick serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 # <<< cfpick <<<
 ```
 
+如果只想让定时任务跑部分节点，在页面里勾选节点即可，命令行会写成
+`run start --node=<节点名>`（名字经过百分号编码，空格和引号不会破坏 crontab）：
+
+```cron
+0 3 * * * /usr/local/bin/cfpick run start --node=%E6%97%A5%E6%9C%AC --node=hk-01 >/dev/null 2>&1
+```
+
+**不勾选任何节点 = 全部已启用节点**，与不带 `--node` 参数等价。删除节点时，本程序会
+同步从主任务的节点选择和「已设置的任务」里移除该节点；如果某个任务因此不再剩任何
+被选节点，它会直接删除（主任务则自动停用），不会悄悄变成“跑全部节点”。修改节点名
+（分享链接不变）时会自动把任务里的旧名字换成新名字。
+
 页面把 cron 拆成五个输入框：**分钟 / 小时 / 日 / 月 / 星期**，可以直接写标准五段
 表达式里的任意合法值：
 
@@ -362,11 +379,12 @@ cfpick serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 
 命令行方式：`cfpick cron apply` / `cfpick cron remove`。
 
-「设置 → 已设置的任务」会以只读方式列出系统 cron 的全部来源：当前用户及其它用户的
-crontab、`/etc/crontab`、`/etc/cron.d/*`，以及 `/etc/cron.{hourly,daily,weekly,monthly}`
-下的可执行脚本；由本程序维护的那一行带「本程序」标记。该面板不会修改任何任务，
-其它任务只有在你手动编辑 crontab 时才会变化。命令行等价物：`cfpick cron list`，
-Web API 为 `GET /api/cron`。
+「设置 → 已设置的任务」列出与本程序相关的 cron 任务（当前用户的 crontab 可直接修改，
+`/etc/crontab` 与 `/etc/cron.d/*` 中的条目只读）。每行可修改计划、启用/停用、切换
+`retest` / `test` / `replace` 类型、勾选执行节点或删除；下方表单可添加新任务。由上方「启用定时测速」
+维护的主任务（`run start`）不在此列出，仍由定时任务配置统一管理。命令行等价物：
+`cfpick cron list`，Web API 为 `GET /api/cron`，写操作对应
+`POST /api/cron/task/save`、`POST /api/cron/task/delete`、`POST /api/cron/task/add`。
 
 ## DDNS（Cloudflare 优选 IP）
 

@@ -44,10 +44,14 @@ class EngineError(RuntimeError):
 
 
 class Engine:
-    def __init__(self, cfg, logger, mode, binary, core_type, run_dir):
+    def __init__(self, cfg, logger, mode, binary, core_type, run_dir,
+                 node_names=None):
         self.cfg = cfg
         self.log = logger
         self.mode = mode
+        # Empty means "every enabled node"; otherwise only these names run.
+        self.node_names = [str(name).strip() for name in (node_names or [])
+                           if str(name).strip()]
         self.binary = binary
         self.core_type = core_type
         self.run_dir = Path(run_dir)
@@ -122,6 +126,21 @@ class Engine:
             raise EngineError(
                 "没有可用的节点：请在「节点」页添加至少一条可用分享链接；"
                 "当前内核 %s 也可能不支持这些节点的协议" % self.core_type)
+        if self.node_names:
+            available = {node["name"] for node in nodes}
+            missing = [name for name in self.node_names if name not in available]
+            if missing:
+                self.log.log("所选节点不存在、未启用或与内核不兼容，已跳过: %s"
+                             % "、".join(missing))
+            nodes = [node for node in nodes if node["name"] in self.node_names]
+            # Renumber slots so SOCKS ports and work directories stay dense.
+            for slot, node in enumerate(nodes, start=1):
+                node["slot"] = slot
+            if not nodes:
+                raise EngineError(
+                    "所选节点没有可运行的项：%s；请检查节点是否已启用、"
+                    "名称是否被修改，以及当前内核 %s 是否支持这些协议"
+                    % ("、".join(self.node_names), self.core_type))
         return nodes
 
     def _assign_ports(self, nodes):
@@ -680,9 +699,15 @@ class Engine:
                          self.cfg["download_time"]))
 
 
-def run(mode="start"):
-    """Run one full test.  Returns a process exit code."""
+def run(mode="start", node_names=None):
+    """Run one full test.  Returns a process exit code.
+
+    ``node_names`` limits the run to those configured nodes; empty/None keeps
+    the default of testing every enabled node.
+    """
     mode = mode if mode in ("start", "test", "retest") else "start"
+    node_names = [str(name).strip() for name in (node_names or [])
+                  if str(name).strip()]
     cfg = config.load()
     paths.ensure_dirs()
     logger = Logger(paths.RUN_LOG)
@@ -725,11 +750,15 @@ def run(mode="start"):
         stop_requested=False,
         error="",
         iterate=bool(cfg["iterate_enabled"]),
-        node_count=len([n for n in cfg.get("nodes", []) if n.get("enabled", True)]),
+        node_count=len([
+            n for n in cfg.get("nodes", [])
+            if n.get("enabled", True)
+            and (not node_names or n.get("name") in node_names)]),
         core_type=core_type,
     )
 
-    engine = Engine(cfg, logger, mode, binary, core_type, run_lock.run_dir)
+    engine = Engine(cfg, logger, mode, binary, core_type, run_lock.run_dir,
+                    node_names=node_names)
     ok = False
     try:
         ok = engine.execute() == 0

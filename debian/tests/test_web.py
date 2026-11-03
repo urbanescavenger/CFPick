@@ -147,7 +147,19 @@ class WebTests(unittest.TestCase):
         self.assertIn("enabled", data["managed"])
         self.assertIn("line", data["managed"])
         self.assertIsInstance(data["entries"], list)
+        self.assertIn("tasks", data)
+        self.assertIsInstance(data["tasks"], list)
+        self.assertIn("writable", data)
+        self.assertIn("run_command", data)
         self.assertIsInstance(data["errors"], list)
+
+    def test_cron_task_write_is_blocked_in_tests(self):
+        # CFPICK_SKIP_CRON=1 keeps the test suite away from the real crontab.
+        status, data = self.request("/api/cron/task/add", method="POST",
+                                    payload={"schedule": "0 3 * * *",
+                                             "mode": "retest"})
+        self.assertEqual(status, 400)
+        self.assertIn("禁止", data["error"])
 
     def test_static_files(self):
         status, text = self.request("/")
@@ -229,6 +241,45 @@ class WebTests(unittest.TestCase):
                                     payload={"config": fixed})
         self.assertEqual(status, 200)
         self.assertEqual(data["config"]["schedule"]["custom_cron"], "15 4 * * 1")
+
+    def test_schedule_nodes_follow_node_changes(self):
+        status, data = self.request("/api/config")
+        self.assertEqual(status, 200)
+        original = data["config"]
+
+        link = "vless://u@1.1.1.1:443#old"
+        cfg = json.loads(json.dumps(original))
+        cfg["nodes"] = [{"name": "old", "link": link, "enabled": True}]
+        cfg["schedule"].update({
+            "enabled": True, "custom_enabled": True,
+            "custom_cron": "0 3 * * *", "nodes": ["old"],
+        })
+        status, data = self.request("/api/config", method="POST",
+                                    payload={"config": cfg})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["config"]["schedule"]["nodes"], ["old"])
+
+        # Rename the node (same link): the selection follows the new name.
+        renamed = json.loads(json.dumps(data["config"]))
+        renamed["nodes"][0]["name"] = "new"
+        status, data = self.request("/api/config", method="POST",
+                                    payload={"config": renamed})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["config"]["schedule"]["nodes"], ["new"])
+        self.assertTrue(data["config"]["schedule"]["enabled"])
+
+        # Delete the selected node: the schedule is disabled instead of
+        # silently widening to "all nodes".
+        deleted = json.loads(json.dumps(data["config"]))
+        deleted["nodes"] = []
+        status, data = self.request("/api/config", method="POST",
+                                    payload={"config": deleted})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["config"]["schedule"]["nodes"], [])
+        self.assertFalse(data["config"]["schedule"]["enabled"])
+        self.assertTrue(any("停用" in warning for warning in data["warnings"]))
+
+        self.request("/api/config", method="POST", payload={"config": original})
 
     def test_token_auth(self):
         status, data = self.request("/api/config")
