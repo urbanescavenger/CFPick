@@ -75,9 +75,6 @@ DEFAULT_CONFIG = {
         "custom_enabled": True,
         "custom_cron": "0 3 * * *",
         "hour": 24,
-        # Node names the scheduled run is limited to.  An empty list means
-        # every enabled node, which is also the behaviour of older configs.
-        "nodes": [],
     },
     "web": {
         "listen": "127.0.0.1",
@@ -170,22 +167,6 @@ def _clean_name(value, fallback):
     name = _clean_text(value)
     name = re.sub(r"[\r\n,]+", " ", name)
     return name or fallback
-
-
-def _normalize_node_selection(value):
-    """Node names a scheduled run is limited to (empty = every node)."""
-    if isinstance(value, str):
-        tokens = value.split(",")
-    elif isinstance(value, (list, tuple)):
-        tokens = list(value)
-    else:
-        tokens = []
-    out = []
-    for token in tokens:
-        name = _clean_name(token, "")
-        if name and name not in out:
-            out.append(name)
-    return out
 
 
 def _normalize_regions(value):
@@ -387,17 +368,11 @@ def normalize(data):
     custom_cron = " ".join(custom_cron.split())
     if not valid_cron(custom_cron):
         custom_cron = DEFAULT_CONFIG["schedule"]["custom_cron"]
-    # Drop selections for nodes that no longer exist: a stale name would be
-    # silently ignored by the engine and make the panel disagree with reality.
-    known_nodes = {item["name"] for item in cfg["nodes"]}
-    selected_nodes = [name for name in _normalize_node_selection(schedule.get("nodes"))
-                      if name in known_nodes]
     cfg["schedule"] = {
         "enabled": _as_bool(schedule.get("enabled"), False),
         "custom_enabled": _as_bool(schedule.get("custom_enabled"), not legacy_interval),
         "custom_cron": custom_cron,
         "hour": _as_int(schedule.get("hour"), 24, 1, 24),
-        "nodes": selected_nodes,
     }
 
     web = data.get("web") if isinstance(data, dict) and isinstance(data.get("web"), dict) else {}

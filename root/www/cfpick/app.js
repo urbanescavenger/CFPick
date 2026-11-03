@@ -695,7 +695,7 @@
 	// line, so the task column can offer an editable mode dropdown.
 	function taskMode(command) {
 		const match = String(command || '').trim()
-			.match(/^(\S*cfpick(?:\.sh)?)[ \t]+(start|retest|test|replace)$/);
+			.match(/^(\S*cfpick(?:\.sh)?)[ \t]+(start|retest|test|replace)([ \t]|$)/);
 
 		return match ? { prefix: match[1], mode: match[2] } : null;
 	}
@@ -794,7 +794,134 @@
 			? host._scheduleValue() : '';
 	}
 
-	async function saveTask(entry, schedule, enabled, mode) {
+	// A task command may carry a node selection as repeated --node=<id> flags;
+	// no flags means every worker node runs (the old behaviour).
+	function taskNodes(command) {
+		const nodes = [];
+
+		String(command || '').trim().split(/\s+/).forEach((token) => {
+			if (token.indexOf('--node=') != 0)
+				return;
+
+			const name = token.slice('--node='.length).trim();
+
+			if (name && nodes.indexOf(name) < 0)
+				nodes.push(name);
+		});
+
+		return nodes;
+	}
+
+	function nodeLabel(id) {
+		const nodes = providerNodes('passwall');
+
+		for (let i = 0; i < nodes.length; i++)
+			if (nodes[i].value === id)
+				return nodes[i].label || id;
+
+		return id;
+	}
+
+	function nodeChoices(selected) {
+		const nodes = providerNodes('passwall');
+		const seen = {};
+		const list = [];
+
+		nodes.forEach((node) => {
+			if (!node.value || seen[node.value])
+				return;
+
+			seen[node.value] = true;
+			list.push({ value: node.value, label: node.label || node.value,
+				type: node.type || '', stale: false });
+		});
+
+		(selected || []).forEach((name) => {
+			if (!name || seen[name])
+				return;
+
+			seen[name] = true;
+			list.push({ value: name, label: name, type: '', stale: true });
+		});
+
+		return list;
+	}
+
+	// Collapsible checkbox list for the node selection.  Like the CLI, an
+	// empty selection means every enabled worker node.
+	function buildNodePicker(selected, disabled) {
+		const details = el('details', { class: 'node-picker' });
+		const summary = el('summary');
+		const list = el('div', { class: 'node-picker-list' });
+		const chosen = {};
+
+		(selected || []).forEach((name) => { chosen[name] = true; });
+
+		nodeChoices(selected).forEach((node) => {
+			const box = el('input', {
+				type: 'checkbox',
+				value: node.value,
+				checked: !!chosen[node.value]
+			});
+
+			if (disabled)
+				box.disabled = true;
+
+			const suffix = node.stale
+				? '（已删除）'
+				: (String(node.type || '').toLowerCase() === 'socks'
+					? '（socks，不能测速）' : '');
+
+			list.appendChild(el('label', { class: 'check' }, [
+				box,
+				el('span', {}, node.label + suffix)
+			]));
+		});
+
+		if (!list.childNodes.length)
+			list.appendChild(el('span', { class: 'muted' }, '还没有 PassWall 节点'));
+
+		details.appendChild(summary);
+		details.appendChild(list);
+
+		details._nodeValues = () => Array.prototype.slice.call(
+			list.querySelectorAll('input[type="checkbox"]:checked'))
+			.map((box) => box.value);
+
+		function sync() {
+			const values = details._nodeValues();
+
+			summary.textContent = values.length
+				? values.map(nodeLabel).join('、') : '全部节点';
+			summary.title = values.length
+				? summary.textContent : '全部待测节点';
+		}
+
+		list.addEventListener('change', sync);
+		sync();
+
+		return details;
+	}
+
+	function mountNodePicker(id, selected) {
+		const host = $('#' + id);
+
+		if (!host)
+			return;
+
+		const picker = buildNodePicker(selected || []);
+		host.replaceChildren(picker);
+		host._nodeValues = picker._nodeValues;
+	}
+
+	function addNodePickerValues() {
+		const host = $('#cfg-task-add-nodes');
+
+		return (host && typeof host._nodeValues === 'function')
+			? host._nodeValues() : [];
+	}
+
+	async function saveTask(entry, schedule, enabled, mode, nodes) {
 		try {
 			state.tasks = await api('task_save', {
 				method: 'POST',
@@ -803,7 +930,8 @@
 					line: entry.line,
 					schedule: schedule,
 					enabled: enabled,
-					mode: mode || ''
+					mode: mode || '',
+					nodes: nodes || []
 				}
 			});
 			renderTasks();
@@ -852,7 +980,8 @@
 				body: {
 					source: (state.tasks && state.tasks.writable) || '/etc/crontabs/root',
 					schedule: schedule,
-					command: script + ' ' + mode
+					command: script + ' ' + mode,
+					nodes: addNodePickerValues()
 				}
 			});
 			renderTasks();
@@ -884,7 +1013,7 @@
 
 		if (!entries.length) {
 			body.appendChild(el('tr', {}, [
-				el('td', { colspan: editable ? '5' : '4', class: 'empty' }, '暂无其他定时任务')
+				el('td', { colspan: editable ? '6' : '5', class: 'empty' }, '暂无其他定时任务')
 			]));
 			return;
 		}
@@ -894,6 +1023,8 @@
 			// are still shown read-only because that file has a user column.
 			const writable = editable && !!entry.writable;
 			const label = taskLabel(entry.command);
+			const nodes = taskNodes(entry.command);
+			const isRun = !!taskMode(entry.command);
 
 			if (!editable) {
 				const toggle = el('button', {
@@ -902,11 +1033,14 @@
 				}, entry.disabled ? '停用' : '启用');
 				toggle.disabled = !entry.writable;
 				toggle.addEventListener('click', () =>
-					saveTask(entry, entry.schedule, entry.disabled, ''));
+					saveTask(entry, entry.schedule, entry.disabled, '', nodes));
 				body.appendChild(el('tr', {}, [
 					el('td', {}, toggle),
 					el('td', {}, describeSchedule(entry.schedule || '0 3 * * *')),
 					el('td', {}, label),
+					el('td', { class: isRun ? '' : 'muted' }, isRun
+						? (nodes.length ? nodes.map(nodeLabel).join('、') : '全部节点')
+						: '—'),
 					el('td', { class: 'cmd' }, entry.command || '')
 				]));
 				return;
@@ -941,10 +1075,22 @@
 				taskCell = el('td', {}, label);
 			}
 
+			let nodePicker = null;
+			let nodeCell;
+
+			if (detected) {
+				nodePicker = buildNodePicker(nodes, !writable);
+				nodeCell = el('td', {}, nodePicker);
+			}
+			else {
+				nodeCell = el('td', { class: 'muted' }, '—');
+			}
+
 			const save = el('button', { type: 'button', class: 'btn small primary' }, '保存');
 			save.disabled = !writable;
 			save.addEventListener('click', () => saveTask(entry, schedule._scheduleValue(),
-				enabled.checked, taskSelect ? taskSelect.value : ''));
+				enabled.checked, taskSelect ? taskSelect.value : '',
+				nodePicker ? nodePicker._nodeValues() : null));
 
 			const remove = el('button', { type: 'button', class: 'btn small danger' }, '删除');
 			remove.disabled = !writable;
@@ -954,6 +1100,7 @@
 				el('td', {}, enabled),
 				el('td', {}, schedule),
 				taskCell,
+				nodeCell,
 				el('td', { class: 'cmd' }, entry.command || ''),
 				el('td', {}, [el('div', { class: 'task-actions' }, [save, remove])])
 			]));
@@ -1043,6 +1190,16 @@
 		fillNodeSelects(g.node_test_node || '', g.stable_node || '');
 		renderWorkers();
 		fillThirdParty();
+
+		// Task rows render whatever nodes were known when they were drawn; the
+		// first load races this API, so redraw now that the list is available.
+		if (state.tasks)
+			renderTasks();
+
+		const host = $('#cfg-task-add-nodes');
+		const selected = (host && typeof host._nodeValues === 'function')
+			? host._nodeValues() : [];
+		mountNodePicker('cfg-task-add-nodes', selected);
 	}
 
 	function fillNodeSelects(testValue, stableValue) {
@@ -1466,12 +1623,19 @@
 	async function saveConfig() {
 		try {
 			const body = collectConfig();
-			await api('config', { method: 'POST', body: body });
+			const saved = await api('config', { method: 'POST', body: body });
 			await loadConfig();
 			await refreshNodes();
 			await refreshStatus();
 			await refreshTasks();
-			toast('配置已保存');
+
+			const prune = (saved && saved.cron_prune) || null;
+
+			if (prune && ((prune.deleted && prune.deleted.length) ||
+				(prune.removed && prune.removed.length)))
+				toast('配置已保存；已同步清理定时任务里的节点引用');
+			else
+				toast('配置已保存');
 		}
 		catch (e) {
 			// DDNS validation failed: clear the token field so the user must
@@ -1574,6 +1738,7 @@
 		$('#btn-sa-save').addEventListener('click', saveStandalone);
 
 		mountScheduleEditor('cfg-task-add-schedule', '0 3 * * *');
+		mountNodePicker('cfg-task-add-nodes', []);
 
 		$('#btn-add-worker').addEventListener('click', addWorker);
 		$('#btn-cfg-task-add').addEventListener('click',

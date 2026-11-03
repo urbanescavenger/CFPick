@@ -70,7 +70,9 @@ class BuildLineTests(unittest.TestCase):
         self.assertEqual(line,
                          "0 */6 * * * /usr/local/bin/cfpick run start >/dev/null 2>&1")
 
-    def test_node_selection_flags(self):
+    def test_main_task_always_runs_every_node(self):
+        # Only the extra tasks can select nodes; the managed start line never
+        # carries --node flags.
         with mock.patch.object(cron, "cli_command", return_value="/usr/local/bin/cfpick"):
             line = cron.build_line({
                 "custom_enabled": True,
@@ -79,9 +81,12 @@ class BuildLineTests(unittest.TestCase):
             })
         self.assertEqual(
             line,
+            "0 3 * * * /usr/local/bin/cfpick run start >/dev/null 2>&1")
+
+    def test_parse_node_flags(self):
+        entry = cron.parse_task(
             "0 3 * * * /usr/local/bin/cfpick run start "
-            "--node=jp%2001 --node=hk >/dev/null 2>&1")
-        entry = cron.parse_task(line, "root")
+            "--node=jp%2001 --node=hk >/dev/null 2>&1", "root")
         self.assertEqual(entry["nodes"], ["jp 01", "hk"])
 
     def test_command_nodes_accepts_space_form(self):

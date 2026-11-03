@@ -917,6 +917,69 @@ const CRON_WRITABLE = '/etc/crontabs/root';
 // Marker for a task disabled from the console.  The original schedule and
 // command stay on the line, so the panel can show and re-enable it.
 const CRON_DISABLED_PREFIX = '# [cfpick-disabled] ';
+// A run can be limited to specific PassWall node sections.  The selection is
+// stored in the command so the task stays self-contained in the crontab:
+//   /usr/lib/cfpick/bin/cfpick.sh retest --node=cfg0a1b2c --node=cfg0a1b2d
+const CRON_NODE_FLAG = '--node=';
+
+function cron_command_nodes(command) {
+	let parts = split_ws(command);
+	let nodes = [];
+
+	for (let i = 0; i < length(parts); i++) {
+		if (substr(parts[i], 0, length(CRON_NODE_FLAG)) != CRON_NODE_FLAG)
+			continue;
+
+		let name = trim(substr(parts[i], length(CRON_NODE_FLAG)));
+
+		if (name != '' && index(nodes, name) < 0)
+			push(nodes, name);
+	}
+
+	return nodes;
+}
+
+// Normalize the console's selection (array or whitespace/comma string) into
+// " --node=id" flags.  Junk is dropped rather than written into crontab.
+function cron_node_flags(nodes) {
+	let list = [];
+
+	if (type(nodes) == 'array') {
+		for (let i = 0; i < length(nodes); i++)
+			push(list, trim('' + (nodes[i] ?? '')));
+	}
+	else if (nodes != null) {
+		let parts = split_ws(replace('' + nodes, /,/g, ' '));
+
+		for (let i = 0; i < length(parts); i++)
+			push(list, parts[i]);
+	}
+
+	let flags = '';
+
+	for (let i = 0; i < length(list); i++) {
+		let name = list[i];
+
+		if (!match(name, /^[A-Za-z0-9_]+$/))
+			continue;
+		if (index(flags, ' ' + CRON_NODE_FLAG + name) >= 0)
+			continue;
+
+		flags += ' ' + CRON_NODE_FLAG + name;
+	}
+
+	return flags;
+}
+
+// Rewrite just the node selection, keeping paths and redirections byte-for-byte.
+function cron_set_nodes(command, nodes) {
+	return trim(replace(command, /[ \t]+--node=[^ \t]*/g, '')) +
+		cron_node_flags(nodes);
+}
+
+function cron_is_run_command(command) {
+	return match(command, /^\S*cfpick(?:\.sh)?[ \t]+(start|retest|test|replace)([ \t]|$)/) != null;
+}
 
 // A task belongs to this plugin when its command references the run script,
 // one of its helper scripts (aliddns.sh, astra-dns.sh) or the standalone
@@ -1018,6 +1081,7 @@ function cron_parse_line(raw, source, index) {
 		command: command,
 		line: disabled ? CRON_DISABLED_PREFIX + line : line,
 		related: cron_related(command),
+		nodes: cron_command_nodes(command),
 		managed: command == RUN_SCRIPT + ' start',
 		disabled: disabled,
 		writable: source == CRON_WRITABLE
@@ -1170,15 +1234,22 @@ function api_task_save_data(req) {
 		die('计划必须是合法的五段 cron 表达式或 @reboot 等简写');
 
 	if (mode != '') {
-		let found = match(command, /^(\S*cfpick(?:\.sh)?)[ \t]+(start|retest|test|replace)$/);
+		let found = match(command, /^(\S*cfpick(?:\.sh)?)[ \t]+(start|retest|test|replace)([\s\S]*)$/);
 
 		if (found == null)
 			die('该任务不支持修改任务类型');
 		if (mode != 'retest' && mode != 'test' && mode != 'replace')
 			die('不支持的任务类型');
 
-		command = found[1] + ' ' + mode;
+		// Keep the trailing args (node selection / redirection) when swapping
+		// the task type.
+		command = found[1] + ' ' + mode + found[3];
 	}
+
+	// An explicit nodes value (even empty) rewrites the selection; leaving the
+	// field out keeps whatever the task already had.
+	if (task.args.nodes != null && cron_is_run_command(command))
+		command = cron_set_nodes(command, task.args.nodes);
 
 	if (task.entry.managed) {
 		cron_managed_save(schedule, enabled);
@@ -1240,6 +1311,9 @@ function api_task_add_data(req) {
 	if (!cron_related(command))
 		die('只能添加本插件相关的命令');
 
+	if (args.nodes != null && cron_is_run_command(command))
+		command = cron_set_nodes(command, args.nodes);
+
 	let line = schedule + ' ' + command;
 
 	// Adding the canonical start line directly would duplicate the one init.d
@@ -1273,6 +1347,76 @@ function api_task_add_data(req) {
 	}
 
 	return api_tasks_data();
+}
+
+// Called after the console removes nodes from its worker table: drop those
+// names from task selections so no task keeps a reference to a gone node.
+// A task whose selection becomes empty is deleted instead of silently
+// widening to "run every node".
+function api_task_prune_data(req) {
+	let args = (req && req.args) || {};
+	let removed = split_ws(replace('' + (args.nodes ?? ''), /,/g, ' '));
+	let report = { removed: [], deleted: [] };
+
+	if (length(removed) == 0 || !fs.access(CRON_WRITABLE, 'f'))
+		return report;
+
+	let lines = cron_file_lines(CRON_WRITABLE);
+	let kept = [];
+	let changed = false;
+
+	for (let i = 0; i < length(lines); i++) {
+		let entry = cron_parse_line(lines[i], CRON_WRITABLE, i);
+
+		if (entry == null || !entry.related || entry.managed || length(entry.nodes) == 0) {
+			push(kept, lines[i]);
+			continue;
+		}
+
+		let remaining = [];
+		let dropped = [];
+
+		for (let j = 0; j < length(entry.nodes); j++) {
+			let name = entry.nodes[j];
+
+			if (index(removed, name) >= 0) {
+				if (index(dropped, name) < 0)
+					push(dropped, name);
+				continue;
+			}
+
+			if (index(remaining, name) < 0)
+				push(remaining, name);
+		}
+
+		if (length(dropped) == 0) {
+			push(kept, lines[i]);
+			continue;
+		}
+
+		for (let j = 0; j < length(dropped); j++)
+			if (index(report.removed, dropped[j]) < 0)
+				push(report.removed, dropped[j]);
+
+		if (length(remaining) == 0) {
+			push(report.deleted, trim(lines[i]));
+			changed = true;
+			continue;
+		}
+
+		let line = entry.schedule + ' ' + cron_set_nodes(entry.command, remaining);
+
+		if (entry.disabled)
+			line = CRON_DISABLED_PREFIX + line;
+
+		push(kept, line);
+		changed = true;
+	}
+
+	if (changed && cron_write_lines(CRON_WRITABLE, kept))
+		system('/etc/init.d/cron restart >/dev/null 2>&1');
+
+	return report;
 }
 
 // Called from LuCI's minimal Settings page: forget the console password and
@@ -1586,7 +1730,7 @@ return {
 		// be introduced through these methods.
 		api_task_save: api(function(req) {
 			return api_task_save_data(req);
-		}, { source: '', line: '', schedule: '', enabled: '', mode: '' }),
+		}, { source: '', line: '', schedule: '', enabled: '', mode: '', nodes: '' }),
 
 		api_task_delete: api(function(req) {
 			return api_task_delete_data(req);
@@ -1594,7 +1738,11 @@ return {
 
 		api_task_add: api(function(req) {
 			return api_task_add_data(req);
-		}, { source: '', schedule: '', command: '' }),
+		}, { source: '', schedule: '', command: '', nodes: '' }),
+
+		api_task_prune: api(function(req) {
+			return api_task_prune_data(req);
+		}, { nodes: '' }),
 
 		api_update_start: api(function() {
 			return app_update_start_data();

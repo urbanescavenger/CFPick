@@ -665,30 +665,8 @@ class Handler(BaseHTTPRequestHandler):
                 ((previous.get("ddns") or {}).get("cloudflare") or {}).get("api_token", ""))
         normalized = config.normalize(incoming)
         removed_nodes, node_renames = _node_changes(previous, normalized)
-        # Apply renames to the selection the browser sent, then normalize
-        # again so the scheduled task keeps pointing at the renamed node.
-        if node_renames and isinstance(incoming.get("schedule"), dict):
-            selected = incoming["schedule"].get("nodes")
-            if isinstance(selected, (list, tuple)):
-                incoming["schedule"]["nodes"] = [
-                    node_renames.get(str(name), name) for name in selected]
-                normalized = config.normalize(incoming)
 
         warnings = _config_warnings(normalized)
-        # Deleting a selected node must never silently widen the task to every
-        # node: drop the dead names, and disable the schedule if none are left.
-        if removed_nodes:
-            previous_selected = list(
-                (previous.get("schedule") or {}).get("nodes") or [])
-            remaining = list((normalized.get("schedule") or {}).get("nodes") or [])
-            lost = [name for name in previous_selected
-                    if name in removed_nodes and name not in node_renames]
-            if lost and not remaining:
-                normalized["schedule"]["enabled"] = False
-                warnings.append("定时测速选择的节点已全部删除，已停用定时测速")
-            elif lost:
-                warnings.append("定时测速已移除已删除的节点：%s" % "、".join(lost))
-
         incoming_schedule = incoming.get("schedule") if isinstance(incoming.get("schedule"), dict) else {}
         incoming_cron = str(incoming_schedule.get("custom_cron") or "").strip()
         if (incoming_schedule.get("custom_enabled") and incoming_cron

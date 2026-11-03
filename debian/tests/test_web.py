@@ -132,7 +132,7 @@ class WebTests(unittest.TestCase):
     def test_app_update_api(self):
         status, data = self.request("/api/app")
         self.assertEqual(status, 200)
-        self.assertEqual(data["version"], "1.0.10")
+        self.assertEqual(data["version"], "1.0.11")
         self.assertIn("source_dir", data)
         self.assertIn("update", data)
         self.assertFalse(data["manageable"])
@@ -242,44 +242,17 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(data["config"]["schedule"]["custom_cron"], "15 4 * * 1")
 
-    def test_schedule_nodes_follow_node_changes(self):
+    def test_schedule_has_no_node_selection(self):
+        # The managed main task always runs every enabled node; node selection
+        # belongs to the additional tasks only.
         status, data = self.request("/api/config")
         self.assertEqual(status, 200)
-        original = data["config"]
-
-        link = "vless://u@1.1.1.1:443#old"
-        cfg = json.loads(json.dumps(original))
-        cfg["nodes"] = [{"name": "old", "link": link, "enabled": True}]
-        cfg["schedule"].update({
-            "enabled": True, "custom_enabled": True,
-            "custom_cron": "0 3 * * *", "nodes": ["old"],
-        })
+        cfg = data["config"]
+        cfg["schedule"]["nodes"] = ["whatever"]
         status, data = self.request("/api/config", method="POST",
                                     payload={"config": cfg})
         self.assertEqual(status, 200)
-        self.assertEqual(data["config"]["schedule"]["nodes"], ["old"])
-
-        # Rename the node (same link): the selection follows the new name.
-        renamed = json.loads(json.dumps(data["config"]))
-        renamed["nodes"][0]["name"] = "new"
-        status, data = self.request("/api/config", method="POST",
-                                    payload={"config": renamed})
-        self.assertEqual(status, 200)
-        self.assertEqual(data["config"]["schedule"]["nodes"], ["new"])
-        self.assertTrue(data["config"]["schedule"]["enabled"])
-
-        # Delete the selected node: the schedule is disabled instead of
-        # silently widening to "all nodes".
-        deleted = json.loads(json.dumps(data["config"]))
-        deleted["nodes"] = []
-        status, data = self.request("/api/config", method="POST",
-                                    payload={"config": deleted})
-        self.assertEqual(status, 200)
-        self.assertEqual(data["config"]["schedule"]["nodes"], [])
-        self.assertFalse(data["config"]["schedule"]["enabled"])
-        self.assertTrue(any("停用" in warning for warning in data["warnings"]))
-
-        self.request("/api/config", method="POST", payload={"config": original})
+        self.assertNotIn("nodes", data["config"]["schedule"])
 
     def test_token_auth(self):
         status, data = self.request("/api/config")

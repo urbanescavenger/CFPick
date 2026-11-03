@@ -191,8 +191,6 @@ table.data td.ip { font-family: var(--mono); }
 .schedule-editor .sched-custom { flex: 1; min-width: 160px; font-family: var(--mono); }
 .task-add { margin-top: 12px; align-items: end; }
 .task-mode { min-width: 220px; min-height: 32px; padding: 5px 8px; font-size: 0.8rem; }
-.field-block { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
-.field-label { font-size: 0.8rem; color: var(--muted); font-weight: 550; }
 .node-picker-host { display: block; min-width: 0; }
 .node-picker { min-width: 0; max-width: 100%; }
 .node-picker summary {

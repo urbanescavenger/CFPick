@@ -1258,8 +1258,6 @@
 		set('ddns_ttl', ddns.ttl);
 		check('ddns_proxied', cloudflare.proxied);
 		check('schedule_enabled', cfg.schedule.enabled);
-		mountNodePicker('schedule-nodes',
-			(cfg.schedule && cfg.schedule.nodes) || []);
 		// The add form starts with no selection (= all nodes) after a reload.
 		mountNodePicker('cron-add-nodes', []);
 		// Older configs selected between an hour interval and a raw expression.
@@ -1327,18 +1325,12 @@
 		const parts = cronParts();
 		const cronError = cronFieldError();
 		if (cronError) throw new Error(cronError);
-		const scheduleNodes = $('#schedule-nodes');
 		cfg.schedule = Object.assign({}, cfg.schedule, {
 			enabled: check('schedule_enabled'),
 			custom_enabled: true,
 			custom_cron: parts.join(' '),
 			// Kept for older readers; custom_enabled=true makes it unused.
 			hour: (cfg.schedule && cfg.schedule.hour) || 24,
-			// Empty = every enabled node.  Without the picker mounted (e.g. a
-			// page still loading) keep whatever the loaded config had.
-			nodes: scheduleNodes && typeof scheduleNodes._nodeValues === 'function'
-				? scheduleNodes._nodeValues()
-				: (((cfg.schedule && cfg.schedule.nodes) || []).slice()),
 		});
 		const corePaths = Object.assign({}, (cfg.core && cfg.core.paths) || {});
 		$$('#core-cards input[data-core-path]').forEach((input) => {

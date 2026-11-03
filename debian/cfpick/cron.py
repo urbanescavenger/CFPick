@@ -92,8 +92,9 @@ def build_line(settings):
     else:
         hour = int(settings.get("hour", 24) or 24)
         expression = "0 */%d * * *" % hour
-    return "%s %s run start%s >/dev/null 2>&1" % (
-        expression, cli_command(), node_flags(settings.get("nodes")))
+    # The main scheduled run always tests every enabled node; only the
+    # additional tasks in the panel can carry a node selection.
+    return "%s %s run start >/dev/null 2>&1" % (expression, cli_command())
 
 
 # ── related-task model for the web panel ───────────────────────────────

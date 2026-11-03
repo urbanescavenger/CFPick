@@ -19,6 +19,17 @@ IPV6_TXT='/usr/share/cfpick/ipv6.txt'
 
 SCRIPT_DIR='/usr/lib/cfpick/bin'
 
+# 定时任务可只跑部分节点：cfpick.sh <mode> --node=<passwall section> [...]
+# 为空 = 全部待测节点（保持旧行为）。
+NODE_FILTER=""
+node_selected() {
+    [ -z "$NODE_FILTER" ] && return 0
+    case " $NODE_FILTER " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
+}
+
 # 迭代模式：单节点候选收敛到 ≤ 此数量即保存结果提前结束（继续复测收益小）。
 # 由独立参数 iterate_converge_count（迭代收敛阈值）配置，与下载实测候选数
 # download_test_count 无关；node_speed_test 会按配置覆写（缺省 5，上限 100）。
@@ -318,6 +329,7 @@ build_retest_ip_lists() {
     local maxn="$1" _w _seen="" _any=0
     for _w in ${NODE_IP_WORKERS:-} ${passwall_services:-} ${node_test_node:-}; do
         [ -n "$_w" ] || continue
+        node_selected "$_w" || continue
         case " $_seen " in *" $_w "*) continue ;; esac
         _seen="$_seen $_w"
         build_retest_list_one "$_w" "$maxn" && _any=1
@@ -1483,6 +1495,7 @@ node_speed_test() {
         local _w _seen=""
         for _w in ${NODE_IP_WORKERS:-} ${passwall_services:-}; do
             [ -n "$_w" ] || continue
+            node_selected "$_w" || continue
             case " $_seen " in *" $_w "*) ;; *) _seen="$_seen $_w"; workers_raw="$workers_raw $_w"; ;; esac
         done
     fi
@@ -1700,6 +1713,12 @@ node_speed_test() {
 
     # ── 单节点串行路径（无第三方 passwall worker 时回退）──
     NODE_TEST_NODE="${node_test_node:-}"
+    # 定时任务按节点过滤时，回退的单节点也必须落在所选范围内，否则宁可不跑，
+    # 也不能悄悄改测一个用户没选的节点。
+    if [ -n "$NODE_FILTER" ] && ! node_selected "$NODE_TEST_NODE"; then
+        echolog "所选节点没有可用的 worker（单节点回退 ${NODE_TEST_NODE:-未配置} 不在所选范围），本次跳过"
+        return 1
+    fi
     [ -n "${NODE_TEST_NODE}" ] || { echolog "未选择 passwall 节点，无法走节点测速"; return 1; }
     local node_type
     node_type=$(echo $(config_n_get ${NODE_TEST_NODE} type) | tr 'A-Z' 'a-z')
@@ -2013,20 +2032,41 @@ function alidns_ip(){
 
 read_config
 
-# 启动参数
-if [ "$1" ] ;then
+# 启动参数: <mode> [--node=<passwall section> ...]
+# 兼容 `--node=id` 与 `--node id` 两种写法；没有 --node 时保持旧行为（全部节点）。
+ACTION=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        start|test|replace|retest)
+            [ -n "$ACTION" ] || ACTION="$1"
+            ;;
+        --node=*)
+            _node_id="${1#--node=}"
+            [ -n "$_node_id" ] && NODE_FILTER="$NODE_FILTER $_node_id"
+            ;;
+        --node)
+            shift
+            [ -n "${1:-}" ] && NODE_FILTER="$NODE_FILTER $1"
+            ;;
+    esac
+    shift
+done
+NODE_FILTER="${NODE_FILTER# }"
+
+if [ -n "$ACTION" ] ;then
     # 整跑入口的单实例锁：start/test/replace 都算一次完整运行。抢不到说明已有整跑在跑
     # （定时任务重叠、UI 连点、SSH 手敲），直接退出——两套 worker 会抢同一批 passwall 节点
     # 并互删中间状态，跑出来的结果是脏的。
-    case "$1" in
+    case "$ACTION" in
         start|test|replace|retest)
-            run_lock_acquire || { echolog "已有测速在运行（PID $(cat "$RUN_LOCK_DIR/pid" 2>/dev/null)），本次 $1 跳过"; exit 1; }
+            run_lock_acquire || { echolog "已有测速在运行（PID $(cat "$RUN_LOCK_DIR/pid" 2>/dev/null)），本次 $ACTION 跳过"; exit 1; }
             ;;
     esac
-    [ $1 == "start" ] && speed_test && ip_replace
-    [ $1 == "test" ] && speed_test
-    [ $1 == "retest" ] && { RETEST_FROM_RESULT=1; speed_test && ip_replace; }
-    [ $1 == "replace" ] && ip_replace
+    [ -n "$NODE_FILTER" ] && echolog "定时任务按节点过滤：只测 ${NODE_FILTER}"
+    [ "$ACTION" == "start" ] && speed_test && ip_replace
+    [ "$ACTION" == "test" ] && speed_test
+    [ "$ACTION" == "retest" ] && { RETEST_FROM_RESULT=1; speed_test && ip_replace; }
+    [ "$ACTION" == "replace" ] && ip_replace
     run_lock_release
     exit
 fi
