@@ -1,21 +1,13 @@
 name: oci-arm-resize
 
-# 目标：自动查容量，优先一次扩到 4 OCPU / 24 GB；4C24G 不可用或实际 update 失败时，
-# 再按“只扩 CPU”（4C6G）、“只扩内存”（2C24G）、更小的“只扩内存”（2C12G）分步走。
+# 和原来的 oci-arm-retry 一样：重试节奏放在 job 内部，不依赖 GitHub schedule。
+#   - job 内跑 5 小时循环，容量不足时 sleep 9~11 分钟再试；
+#   - 5 小时到了用 gh workflow run 自己续链；
+#   - schedule 只是 6 小时一次的 watchdog，真正的重试靠 self-chain。
 #
-# 行为：
-#   - schedule 每 10 分钟查一次 capacity report（只读，不重启实例）。
-#   - 只查“还没成功、且不会降配”的步骤；某个中间步成功后，下一轮自动 SKIPPED 该步。
-#   - 候选按 preference 排序；4C24G 永远第一，最后是 2C12G 小步兜底。
-#     实际 update 遇到 Out of host capacity 时，自动尝试下一个候选；
-#     全部失败则本轮正常结束，下轮继续。
-#   - 到达 4C24G 后自动 disable；分步成功则保持启用，继续冲 4C24G。
-#   - update 失败/实例被留在 STOPPED 时，自动 START 恢复。
-#   - workflow_dispatch 默认 dry_run=true：只查规格和容量，不改实例。
-#   - 定时 resize 需要 repo variable OCI_RESIZE_ENABLED=true 才会执行；
-#     未设置时 schedule 只创建 skipped run，手动 dispatch 不受影响。
-#     启用：gh variable set OCI_RESIZE_ENABLED --repo <owner/repo> --body true
-#     暂停：gh variable delete OCI_RESIZE_ENABLED --repo <owner/repo>
+# 目标：优先 4C24G；失败自动降级 4C6G（只扩 CPU）、2C24G（只扩内存）、
+# 2C12G（更小的只扩内存）。某个中间步成功后，下一轮不再尝试该步。
+# 到达 4C24G 后自动 disable workflow。
 #
 # 计费提醒（上线前必读）：
 #   Oracle Cloud Price List 的 Ampere A1 脚注写的是
@@ -26,15 +18,20 @@ name: oci-arm-resize
 #   扩容后 24~48h 看 Cost Analysis。若真按 1,500/9,000 计费：
 #     4C6G 约 $14.76/月（OCPU 超 1,476）、2C24G 约 $13.28/月（内存超 8,856）、4C24G 约 $28/月。
 #
+# 触发：
+#   - workflow_dispatch：默认 dry_run=true，只打印当前规格和候选，不改实例。
+#   - schedule：每 6 小时 watchdog；需要 repo variable OCI_RESIZE_ENABLED=true。
+#   - self-chain 用 workflow_dispatch，不受该变量限制；要停就 disable workflow。
+#
 # 可选：添加 OCI_INSTANCE_ID secret 直接指定实例，避免按 display-name 查找。
 
 on:
   schedule:
-    - cron: "3,13,23,33,43,53 * * * *"
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "只检查当前规格和容量，不执行 resize"
+        description: "只打印当前规格和候选，不执行 resize"
         type: boolean
         default: true
       step_preference:
@@ -52,6 +49,7 @@ permissions:
 
 concurrency:
   group: oci-arm-resize
+  # 不要取消正在 resize/重启的 run；续链会排队等当前 run 结束。
   cancel-in-progress: false
 
 env:
@@ -64,14 +62,14 @@ env:
   SMALL_MEM_STEP_OCPUS: "2"
   SMALL_MEM_STEP_MEMORY_GBS: "12"
   INSTANCE_NAME: "free-arm-1"
-  # 默认优先 cpu_first（4C6G）；想优先扩内存，把 capacity 步骤里 PREFERENCE 的 'cpu_first' 改成 'memory_first'。
+  PREFERENCE: ${{ inputs.step_preference || 'cpu_first' }}
 
 jobs:
   resize:
-    # 安全闸：定时任务必须显式打开 repo variable 才会 resize；手动 dispatch 不受影响。
+    # watchdog schedule 需要显式打开变量；手动/续链不受影响。
     if: github.event_name != 'schedule' || vars.OCI_RESIZE_ENABLED == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 350
 
     steps:
       - name: Install OCI CLI
@@ -103,93 +101,12 @@ jobs:
           oci iam region list --output table > /dev/null
           echo "OCI CLI OK"
 
-      - name: Inspect instance
-        id: inspect
+      - name: Retry loop
+        id: loop
         env:
           COMPARTMENT: ${{ secrets.OCI_COMPARTMENT }}
           INSTANCE_ID_SECRET: ${{ secrets.OCI_INSTANCE_ID }}
-          FULL_OCPUS: ${{ env.FULL_OCPUS }}
-          FULL_MEMORY_GBS: ${{ env.FULL_MEMORY_GBS }}
-          INSTANCE_NAME: ${{ env.INSTANCE_NAME }}
-        run: |
-          set -euo pipefail
-
-          if [ -n "${INSTANCE_ID_SECRET:-}" ]; then
-            instance_id="$INSTANCE_ID_SECRET"
-            echo "使用 OCI_INSTANCE_ID secret"
-          else
-            oci compute instance list \
-              --compartment-id "$COMPARTMENT" \
-              --all \
-              --output json > "$RUNNER_TEMP/instances.json"
-            instance_id=$(jq -r --arg name "$INSTANCE_NAME" \
-              'first((.data // .)[] | select((."display-name" // .displayName) == $name and (."lifecycle-state" // .lifecycleState) != "TERMINATED") | .id) // empty' \
-              "$RUNNER_TEMP/instances.json")
-            echo "按 display-name 查找实例"
-          fi
-
-          if [ -z "${instance_id:-}" ] || [ "$instance_id" = "null" ]; then
-            echo "::error::找不到实例 $INSTANCE_NAME；请检查 OCI_COMPARTMENT，或添加 OCI_INSTANCE_ID secret"
-            exit 1
-          fi
-          echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
-
-          oci compute instance get --instance-id "$instance_id" --output json > "$RUNNER_TEMP/instance.json"
-          shape=$(jq -r '(.data // .) | .shape // "UNKNOWN"' "$RUNNER_TEMP/instance.json")
-          name=$(jq -r '(.data // .) | (."display-name" // .displayName // "UNKNOWN")' "$RUNNER_TEMP/instance.json")
-          ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((.ocpus // 0) | floor)' "$RUNNER_TEMP/instance.json")
-          mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((."memoryInGBs" // .memoryInGbs // ."memory-in-gbs" // 0) | floor)' "$RUNNER_TEMP/instance.json")
-          state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/instance.json")
-
-          echo "instance: $name ($instance_id)"
-          echo "shape: $shape, ${ocpus} OCPU / ${mem} GB, state=$state"
-
-          echo "shape=$shape" >> "$GITHUB_OUTPUT"
-          echo "ocpus=$ocpus" >> "$GITHUB_OUTPUT"
-          echo "memory=$mem" >> "$GITHUB_OUTPUT"
-          echo "state=$state" >> "$GITHUB_OUTPUT"
-
-          if [ "$shape" != "VM.Standard.A1.Flex" ]; then
-            echo "::error::实例不是 VM.Standard.A1.Flex，拒绝操作"
-            exit 1
-          fi
-
-          if [ "$ocpus" = "$FULL_OCPUS" ] && [ "$mem" = "$FULL_MEMORY_GBS" ]; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "already=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # 4C24G 正好吃满 paid tenancy 的 3,000/18,000 额度；再有第二个 A1 实例就会计费。
-          a1_count=$(jq -r '[ (.data // .)[] | select(.shape == "VM.Standard.A1.Flex" and (."lifecycle-state" // .lifecycleState) != "TERMINATED") ] | length' \
-            "$RUNNER_TEMP/instances.json" 2>/dev/null || echo "unknown")
-          if [ "$a1_count" != "unknown" ] && [ "$a1_count" -gt 1 ] 2>/dev/null; then
-            echo "::warning::发现 $a1_count 个 A1 实例；4C24G 会占满免费额度，其他 A1 实例可能产生费用"
-          fi
-
-      - name: Disable workflow if already 4C24G
-        if: steps.inspect.outputs.already == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "实例已经是 ${FULL_OCPUS} OCPU / ${FULL_MEMORY_GBS} GB，停用本 workflow"
-          gh workflow disable oci-arm-resize.yml --repo "$GITHUB_REPOSITORY" || true
-          {
-            echo "### 已经是目标规格"
-            echo "- 实例：${{ steps.inspect.outputs.instance_id }}"
-            echo "- 规格：${{ steps.inspect.outputs.ocpus }} OCPU / ${{ steps.inspect.outputs.memory }} GB"
-            echo "- 本 workflow 已停用"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Check capacity report (only needed steps)
-        id: capacity
-        if: steps.inspect.outputs.already != 'true'
-        env:
-          TENANCY: ${{ secrets.OCI_TENANCY }}
-          AD: ${{ secrets.OCI_AD }}
-          CURRENT_OCPUS: ${{ steps.inspect.outputs.ocpus }}
-          CURRENT_MEMORY: ${{ steps.inspect.outputs.memory }}
-          PREFERENCE: ${{ inputs.step_preference || 'cpu_first' }}
+          DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
           FULL_OCPUS: ${{ env.FULL_OCPUS }}
           FULL_MEMORY_GBS: ${{ env.FULL_MEMORY_GBS }}
           CPU_STEP_OCPUS: ${{ env.CPU_STEP_OCPUS }}
@@ -198,446 +115,256 @@ jobs:
           MEM_STEP_MEMORY_GBS: ${{ env.MEM_STEP_MEMORY_GBS }}
           SMALL_MEM_STEP_OCPUS: ${{ env.SMALL_MEM_STEP_OCPUS }}
           SMALL_MEM_STEP_MEMORY_GBS: ${{ env.SMALL_MEM_STEP_MEMORY_GBS }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INSTANCE_NAME: ${{ env.INSTANCE_NAME }}
+          PREFERENCE: ${{ env.PREFERENCE }}
         run: |
           set -euo pipefail
 
-          # 只查“还没成功、且不会降配”的步骤：
-          #   4C24G = full；4C6G = 只扩 CPU；2C24G = 只扩内存。
-          # 某个中间步成功后，下一轮 need_* 自动变 false，不再查该步。
-          need_full=false
-          if [ "$FULL_OCPUS" -ge "$CURRENT_OCPUS" ] && [ "$FULL_MEMORY_GBS" -ge "$CURRENT_MEMORY" ] \
-             && ! { [ "$CURRENT_OCPUS" = "$FULL_OCPUS" ] && [ "$CURRENT_MEMORY" = "$FULL_MEMORY_GBS" ]; }; then
-            need_full=true
-          fi
+          deadline=$(( $(date +%s) + 18000 ))   # 5 小时
+          attempt=0
+          stop=false
 
-          need_cpu=false
-          if [ "$CPU_STEP_OCPUS" -ge "$CURRENT_OCPUS" ] && [ "$CPU_STEP_MEMORY_GBS" -ge "$CURRENT_MEMORY" ] \
-             && ! { [ "$CURRENT_OCPUS" = "$CPU_STEP_OCPUS" ] && [ "$CURRENT_MEMORY" = "$CPU_STEP_MEMORY_GBS" ]; }; then
-            need_cpu=true
-          fi
+          # 只升不降的候选构造：
+          #   4C24G 永远第一；然后按 preference 排 4C6G / 2C24G；2C12G 最后兜底。
+          #   已经成功的中间步会因为“不 >= 当前值”或“等于当前值”而被排除。
+          build_candidates() {
+            cand_ocpus=()
+            cand_mem=()
+            cand_label=()
 
-          need_mem=false
-          if [ "$MEM_STEP_OCPUS" -ge "$CURRENT_OCPUS" ] && [ "$MEM_STEP_MEMORY_GBS" -ge "$CURRENT_MEMORY" ] \
-             && ! { [ "$CURRENT_OCPUS" = "$MEM_STEP_OCPUS" ] && [ "$CURRENT_MEMORY" = "$MEM_STEP_MEMORY_GBS" ]; }; then
-            need_mem=true
-          fi
+            add_candidate_internal() {
+              cand_ocpus+=("$1")
+              cand_mem+=("$2")
+              cand_label+=("$3")
+            }
 
-          need_small_mem=false
-          if [ "$SMALL_MEM_STEP_OCPUS" -ge "$CURRENT_OCPUS" ] && [ "$SMALL_MEM_STEP_MEMORY_GBS" -ge "$CURRENT_MEMORY" ] \
-             && ! { [ "$CURRENT_OCPUS" = "$SMALL_MEM_STEP_OCPUS" ] && [ "$CURRENT_MEMORY" = "$SMALL_MEM_STEP_MEMORY_GBS" ]; }; then
-            need_small_mem=true
-          fi
+            if [ "$FULL_OCPUS" -ge "$cur_ocpus" ] && [ "$FULL_MEMORY_GBS" -ge "$cur_mem" ] \
+               && ! { [ "$cur_ocpus" = "$FULL_OCPUS" ] && [ "$cur_mem" = "$FULL_MEMORY_GBS" ]; }; then
+              add_candidate_internal "$FULL_OCPUS" "$FULL_MEMORY_GBS" "4C24G (full)"
+            fi
 
-          echo "need: full=$need_full cpu=$need_cpu mem=$need_mem small_mem=$need_small_mem"
+            if [ "$PREFERENCE" != "full_only" ]; then
+              cpu_ok=false
+              if [ "$CPU_STEP_OCPUS" -ge "$cur_ocpus" ] && [ "$CPU_STEP_MEMORY_GBS" -ge "$cur_mem" ] \
+                 && ! { [ "$cur_ocpus" = "$CPU_STEP_OCPUS" ] && [ "$cur_mem" = "$CPU_STEP_MEMORY_GBS" ]; }; then
+                cpu_ok=true
+              fi
 
-          if [ "$need_full" = false ] && [ "$need_cpu" = false ] && [ "$need_mem" = false ] && [ "$need_small_mem" = false ]; then
-            echo "::warning::当前规格已在目标之上，没有可提升的候选；停用 workflow"
-            gh workflow disable oci-arm-resize.yml --repo "$GITHUB_REPOSITORY" || true
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "no_candidates=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "### 没有可提升的候选"
-              echo "当前 ${CURRENT_OCPUS}C/${CURRENT_MEMORY}G 已在目标之上；本 workflow 已停用。"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
+              mem_ok=false
+              if [ "$MEM_STEP_OCPUS" -ge "$cur_ocpus" ] && [ "$MEM_STEP_MEMORY_GBS" -ge "$cur_mem" ] \
+                 && ! { [ "$cur_ocpus" = "$MEM_STEP_OCPUS" ] && [ "$cur_mem" = "$MEM_STEP_MEMORY_GBS" ]; }; then
+                mem_ok=true
+              fi
 
-          SHAPES=$(jq -n \
-            --argjson full "$need_full" \
-            --argjson cpu "$need_cpu" \
-            --argjson mem "$need_mem" \
-            --argjson small_mem "$need_small_mem" \
-            '[
-              (if $full then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":4,"memoryInGBs":24}} else empty end),
-              (if $cpu then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":4,"memoryInGBs":6}} else empty end),
-              (if $mem then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":2,"memoryInGBs":24}} else empty end),
-              (if $small_mem then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":2,"memoryInGBs":12}} else empty end)
-            ]')
-          echo "query shapes: $SHAPES"
+              small_ok=false
+              if [ "$SMALL_MEM_STEP_OCPUS" -ge "$cur_ocpus" ] && [ "$SMALL_MEM_STEP_MEMORY_GBS" -ge "$cur_mem" ] \
+                 && ! { [ "$cur_ocpus" = "$SMALL_MEM_STEP_OCPUS" ] && [ "$cur_mem" = "$SMALL_MEM_STEP_MEMORY_GBS" ]; }; then
+                small_ok=true
+              fi
 
-          if ! oci compute compute-capacity-report create \
-              --compartment-id "$TENANCY" \
-              --availability-domain "$AD" \
-              --shape-availabilities "$SHAPES" \
-              --output json > "$RUNNER_TEMP/capacity.json" 2> "$RUNNER_TEMP/capacity.err"; then
-            echo "::warning::capacity report 调用失败（可能缺少 manage compute-capacity-reports 权限）"
-            cat "$RUNNER_TEMP/capacity.err" || true
-            echo "report_error=true" >> "$GITHUB_OUTPUT"
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "### capacity report 调用失败"
-              echo "请在 OCI IAM 给该用户加："
-              echo '```'
-              echo "allow user <oci-user> to manage compute-capacity-reports in tenancy"
-              echo '```'
-              echo "或检查 OCI_TENANCY / OCI_AD 是否正确。"
-              echo
-              echo "错误："
-              echo '```'
-              cat "$RUNNER_TEMP/capacity.err" || true
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
+              if [ "$PREFERENCE" = "memory_first" ]; then
+                if [ "$mem_ok" = true ]; then add_candidate_internal "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS" "2C24G (memory step)"; fi
+                if [ "$cpu_ok" = true ]; then add_candidate_internal "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS" "4C6G (cpu step)"; fi
+              else
+                if [ "$cpu_ok" = true ]; then add_candidate_internal "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS" "4C6G (cpu step)"; fi
+                if [ "$mem_ok" = true ]; then add_candidate_internal "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS" "2C24G (memory step)"; fi
+              fi
 
-          cat "$RUNNER_TEMP/capacity.json"
-
-          # 按 config 匹配，不依赖响应顺序。
-          status_for() {
-            jq -r --argjson o "$1" --argjson m "$2" '
-              first(
-                (.data // .) | (."shape-availabilities" // .shapeAvailabilities // [])[]
-                | select(
-                    (."instance-shape-config" // .instanceShapeConfig // {}) as $c
-                    | ($c.ocpus // -1) == $o
-                      and (($c."memory-in-gbs" // $c.memoryInGbs // $c.memoryInGBs // -1)) == $m
-                  )
-                | (."availability-status" // .availabilityStatus // "UNKNOWN")
-              ) // "UNKNOWN"
-            ' "$RUNNER_TEMP/capacity.json"
-          }
-          count_for() {
-            jq -r --argjson o "$1" --argjson m "$2" '
-              first(
-                (.data // .) | (."shape-availabilities" // .shapeAvailabilities // [])[]
-                | select(
-                    (."instance-shape-config" // .instanceShapeConfig // {}) as $c
-                    | ($c.ocpus // -1) == $o
-                      and (($c."memory-in-gbs" // $c.memoryInGbs // $c.memoryInGBs // -1)) == $m
-                  )
-                | (."available-count" // .availableCount // "null")
-              ) // "null"
-            ' "$RUNNER_TEMP/capacity.json"
+              if [ "$small_ok" = true ]; then add_candidate_internal "$SMALL_MEM_STEP_OCPUS" "$SMALL_MEM_STEP_MEMORY_GBS" "2C12G (small memory step)"; fi
+            fi
           }
 
-          status_full="SKIPPED"; count_full="null"
-          status_cpu="SKIPPED";  count_cpu="null"
-          status_mem="SKIPPED";  count_mem="null"
-          status_small_mem="SKIPPED"; count_small_mem="null"
-          if [ "$need_full" = true ]; then status_full=$(status_for "$FULL_OCPUS" "$FULL_MEMORY_GBS"); count_full=$(count_for "$FULL_OCPUS" "$FULL_MEMORY_GBS"); fi
-          if [ "$need_cpu" = true ];  then status_cpu=$(status_for "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS"); count_cpu=$(count_for "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS"); fi
-          if [ "$need_mem" = true ];  then status_mem=$(status_for "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS"); count_mem=$(count_for "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS"); fi
-          if [ "$need_small_mem" = true ]; then status_small_mem=$(status_for "$SMALL_MEM_STEP_OCPUS" "$SMALL_MEM_STEP_MEMORY_GBS"); count_small_mem=$(count_for "$SMALL_MEM_STEP_OCPUS" "$SMALL_MEM_STEP_MEMORY_GBS"); fi
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            attempt=$((attempt + 1))
+            echo "=================================================="
+            echo "[$(date '+%F %T')] 第 $attempt 轮"
 
-          echo "full 4C24G: $status_full (count=$count_full)"
-          echo "cpu  4C6G : $status_cpu (count=$count_cpu)"
-          echo "mem  2C24G: $status_mem (count=$count_mem)"
-          echo "small 2C12G: $status_small_mem (count=$count_small_mem)"
-
-          count_ok() {
-            local c="$1"
-            if [ "$c" = "null" ] || [ -z "$c" ]; then return 0; fi
-            if [ "$c" -gt 0 ] 2>/dev/null; then return 0; fi
-            return 1
-          }
-
-          avail_full=false; avail_cpu=false; avail_mem=false; avail_small_mem=false
-          if [ "$need_full" = true ] && [ "$status_full" = "AVAILABLE" ] && count_ok "$count_full"; then avail_full=true; fi
-          if [ "$need_cpu" = true ]  && [ "$status_cpu"  = "AVAILABLE" ] && count_ok "$count_cpu";  then avail_cpu=true;  fi
-          if [ "$need_mem" = true ]  && [ "$status_mem"  = "AVAILABLE" ] && count_ok "$count_mem";  then avail_mem=true;  fi
-          if [ "$need_small_mem" = true ] && [ "$status_small_mem" = "AVAILABLE" ] && count_ok "$count_small_mem"; then avail_small_mem=true; fi
-
-          # 候选按优先级排：full 永远第一；中间步按 preference 排序。
-          # capacity report 假阳性、实际 update 失败时，自动降级尝试下一步。
-          candidates='[]'
-          add_candidate() {
-            candidates=$(jq -c --argjson o "$1" --argjson m "$2" --arg l "$3" --argjson f "$4" \
-              '. + [{"ocpus":$o,"memory":$m,"label":$l,"is_full":$f}]' <<<"$candidates")
-          }
-
-          if [ "$avail_full" = true ]; then
-            add_candidate "$FULL_OCPUS" "$FULL_MEMORY_GBS" "4C24G (full)" true
-          fi
-
-          if [ "$PREFERENCE" != "full_only" ]; then
-            if [ "$PREFERENCE" = "memory_first" ]; then
-              if [ "$avail_mem" = true ]; then add_candidate "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS" "2C24G (memory step)" false; fi
-              if [ "$avail_cpu" = true ]; then add_candidate "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS" "4C6G (cpu step)" false; fi
+            # 每轮重新按 display-name 找实例；实例 ID 不会变，但这样能兼容重建。
+            if [ -n "${INSTANCE_ID_SECRET:-}" ]; then
+              instance_id="$INSTANCE_ID_SECRET"
             else
-              if [ "$avail_cpu" = true ]; then add_candidate "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS" "4C6G (cpu step)" false; fi
-              if [ "$avail_mem" = true ]; then add_candidate "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS" "2C24G (memory step)" false; fi
+              if ! oci compute instance list \
+                  --compartment-id "$COMPARTMENT" \
+                  --all \
+                  --output json > "$RUNNER_TEMP/instances.json"; then
+                echo "::warning::列出实例失败，等 5 分钟"
+                sleep 300
+                continue
+              fi
+              instance_id=$(jq -r --arg name "$INSTANCE_NAME" \
+                'first((.data // .)[] | select((."display-name" // .displayName) == $name and (."lifecycle-state" // .lifecycleState) != "TERMINATED") | .id) // empty' \
+                "$RUNNER_TEMP/instances.json")
             fi
-            if [ "$avail_small_mem" = true ]; then add_candidate "$SMALL_MEM_STEP_OCPUS" "$SMALL_MEM_STEP_MEMORY_GBS" "2C12G (small memory step)" false; fi
-          fi
 
-          candidate_count=$(jq 'length' <<<"$candidates")
-          target_ocpus=""; target_memory=""; target_label=""; is_full=false
-          if [ "$candidate_count" -gt 0 ]; then
-            available=true
-            target_ocpus=$(jq -r '.[0].ocpus' <<<"$candidates")
-            target_memory=$(jq -r '.[0].memory' <<<"$candidates")
-            target_label=$(jq -r '.[0].label' <<<"$candidates")
-            is_full=$(jq -r '.[0].is_full' <<<"$candidates")
-            echo "本轮候选（按顺序）：$(jq -r '[.[].label] | join(" -> ")' <<<"$candidates")"
-          else
-            available=false
-            echo "本轮没有可用的目标规格"
-          fi
-
-          echo "status_full=$status_full" >> "$GITHUB_OUTPUT"
-          echo "status_cpu=$status_cpu" >> "$GITHUB_OUTPUT"
-          echo "status_mem=$status_mem" >> "$GITHUB_OUTPUT"
-          echo "status_small_mem=$status_small_mem" >> "$GITHUB_OUTPUT"
-          echo "count_full=$count_full" >> "$GITHUB_OUTPUT"
-          echo "count_cpu=$count_cpu" >> "$GITHUB_OUTPUT"
-          echo "count_mem=$count_mem" >> "$GITHUB_OUTPUT"
-          echo "count_small_mem=$count_small_mem" >> "$GITHUB_OUTPUT"
-          echo "available=$available" >> "$GITHUB_OUTPUT"
-          echo "target_ocpus=$target_ocpus" >> "$GITHUB_OUTPUT"
-          echo "target_memory=$target_memory" >> "$GITHUB_OUTPUT"
-          echo "target_label=$target_label" >> "$GITHUB_OUTPUT"
-          echo "is_full=$is_full" >> "$GITHUB_OUTPUT"
-          echo "candidate_count=$candidate_count" >> "$GITHUB_OUTPUT"
-          echo "candidates=$(jq -c '.' <<<"$candidates")" >> "$GITHUB_OUTPUT"
-
-          {
-            echo "### 容量查询（当前 ${CURRENT_OCPUS}C/${CURRENT_MEMORY}G，偏好 $PREFERENCE）"
-            echo "| 目标 | 状态 | availableCount | 可执行 |"
-            echo "|---|---|---|---|"
-            echo "| 4C24G (full) | $status_full | $count_full | $avail_full |"
-            echo "| 4C6G (cpu step) | $status_cpu | $count_cpu | $avail_cpu |"
-            echo "| 2C24G (memory step) | $status_mem | $count_mem | $avail_mem |"
-            echo "| 2C12G (small memory step) | $status_small_mem | $count_small_mem | $avail_small_mem |"
-            echo
-            echo "SKIPPED = 该步已成功或会降配，本轮不再查询。"
-            if [ "$candidate_count" -gt 0 ]; then
-              echo
-              echo "**本轮候选顺序：$(jq -r '[.[].label] | join(" -> ")' <<<"$candidates")**"
+            if [ -z "${instance_id:-}" ] || [ "$instance_id" = "null" ]; then
+              echo "::error::找不到实例 $INSTANCE_NAME；请检查 OCI_COMPARTMENT，或添加 OCI_INSTANCE_ID secret"
+              sleep 300
+              continue
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fail manual run on capacity report error
-        if: always() && steps.capacity.outputs.report_error == 'true' && github.event_name == 'workflow_dispatch'
-        run: |
-          echo "::error::手动运行需要 capacity report 成功；请先修好 IAM 权限或 OCI_TENANCY / OCI_AD"
-          exit 1
+            oci compute instance get --instance-id "$instance_id" --output json > "$RUNNER_TEMP/instance.json"
+            shape=$(jq -r '(.data // .) | .shape // "UNKNOWN"' "$RUNNER_TEMP/instance.json")
+            cur_ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((.ocpus // 0) | floor)' "$RUNNER_TEMP/instance.json")
+            cur_mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((."memoryInGBs" // .memoryInGbs // ."memory-in-gbs" // 0) | floor)' "$RUNNER_TEMP/instance.json")
+            state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/instance.json")
 
-      - name: Resize through candidate list
-        id: resize
-        if: always() && steps.inspect.outputs.already != 'true' && steps.capacity.outputs.available == 'true' && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
-        env:
-          INSTANCE_ID: ${{ steps.inspect.outputs.instance_id }}
-          INSTANCE_STATE: ${{ steps.inspect.outputs.state }}
-          CANDIDATES: ${{ steps.capacity.outputs.candidates }}
-        run: |
-          set -euo pipefail
-          echo "resize_attempted=true" >> "$GITHUB_ENV"
+            echo "当前：$shape / ${cur_ocpus} OCPU / ${cur_mem} GB / state=$state"
 
-          if [ "$INSTANCE_STATE" != "RUNNING" ]; then
-            if [ "$INSTANCE_STATE" = "STOPPED" ]; then
-              echo "实例当前 STOPPED，先启动到 RUNNING"
+            if [ "$shape" != "VM.Standard.A1.Flex" ]; then
+              echo "::error::实例不是 VM.Standard.A1.Flex，停止"
+              exit 1
+            fi
+
+            if [ "$cur_ocpus" = "$FULL_OCPUS" ] && [ "$cur_mem" = "$FULL_MEMORY_GBS" ]; then
+              echo "✅ 已经是 4C24G，停止"
+              stop=true
+              break
+            fi
+
+            if [ "$state" = "STOPPED" ]; then
+              echo "实例 STOPPED，先启动"
               oci compute instance action \
-                --instance-id "$INSTANCE_ID" \
+                --instance-id "$instance_id" \
                 --action START \
                 --wait-for-state RUNNING \
                 --max-wait-seconds 600 \
-                --wait-interval-seconds 10
-            else
-              echo "::warning::实例状态是 $INSTANCE_STATE，本轮跳过 resize"
-              echo "resize_ok=false" >> "$GITHUB_ENV"
+                --wait-interval-seconds 10 || true
+              sleep 10
+              continue
+            fi
+
+            if [ "$state" != "RUNNING" ]; then
+              echo "实例状态 $state，等 30 秒"
+              sleep 30
+              continue
+            fi
+
+            build_candidates
+            candidate_count=${#cand_ocpus[@]}
+
+            if [ "$candidate_count" -eq 0 ]; then
+              echo "当前规格已在目标之上，没有可提升候选；停用 workflow"
+              stop=true
+              break
+            fi
+
+            echo "候选顺序：${cand_label[*]}"
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "dry-run：不执行 resize，退出"
               exit 0
             fi
-          fi
 
-          count=$(jq 'length' <<<"$CANDIDATES")
-          if [ "$count" -eq 0 ]; then
-            echo "::warning::候选列表为空，跳过"
-            echo "resize_ok=false" >> "$GITHUB_ENV"
-            exit 0
-          fi
+            round_ok=false
+            hard_error=false
 
-          resize_ok=false
-          hard_failure=false
+            for idx in "${!cand_ocpus[@]}"; do
+              target_ocpus="${cand_ocpus[$idx]}"
+              target_mem="${cand_mem[$idx]}"
+              target_label="${cand_label[$idx]}"
 
-          for i in $(seq 0 $((count - 1))); do
-            target_ocpus=$(jq -r ".[$i].ocpus" <<<"$CANDIDATES")
-            target_memory=$(jq -r ".[$i].memory" <<<"$CANDIDATES")
-            target_label=$(jq -r ".[$i].label" <<<"$CANDIDATES")
-            echo "===== 尝试 $((i + 1))/$count：$target_label -> ${target_ocpus} OCPU / ${target_memory} GB ====="
-            echo "（成功会重启实例，预计 1~3 分钟）"
+              echo "----- 尝试 $target_label -> ${target_ocpus} OCPU / ${target_mem} GB -----"
 
-            if ! oci compute instance update \
-                --instance-id "$INSTANCE_ID" \
-                --shape-config "{\"ocpus\":${target_ocpus},\"memoryInGBs\":${target_memory}}" \
-                --update-operation-constraint ALLOW_DOWNTIME \
-                --force \
-                --no-retry \
-                --output json > "$RUNNER_TEMP/update.json" 2> "$RUNNER_TEMP/update.err"; then
-              cat "$RUNNER_TEMP/update.err" || true
-              if grep -qi "Out of host capacity" "$RUNNER_TEMP/update.err"; then
-                echo "::warning::$target_label 实际 update 时容量不足，尝试下一个候选"
-                oci compute instance get --instance-id "$INSTANCE_ID" --output json > "$RUNNER_TEMP/after_fail.json"
-                state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/after_fail.json")
-                if [ "$state" != "RUNNING" ]; then
-                  echo "::warning::update 失败后实例状态 $state，停止候选循环并交给恢复步骤"
+              if ! oci compute instance update \
+                  --instance-id "$instance_id" \
+                  --shape-config "{\"ocpus\":${target_ocpus},\"memoryInGBs\":${target_mem}}" \
+                  --update-operation-constraint ALLOW_DOWNTIME \
+                  --force \
+                  --no-retry \
+                  --output json > "$RUNNER_TEMP/update.json" 2> "$RUNNER_TEMP/update.err"; then
+                cat "$RUNNER_TEMP/update.err" || true
+                if grep -qi "Out of host capacity" "$RUNNER_TEMP/update.err"; then
+                  echo "::warning::$target_label 容量不足，尝试下一个候选"
+                  oci compute instance get --instance-id "$instance_id" --output json > "$RUNNER_TEMP/after_fail.json" || true
+                  after_state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/after_fail.json" 2>/dev/null || echo "UNKNOWN")
+                  if [ "$after_state" != "RUNNING" ]; then
+                    echo "update 失败后实例状态 $after_state，交给下一轮恢复"
+                    break
+                  fi
+                  continue
+                fi
+                echo "::error::$target_label update 失败（非容量原因）"
+                hard_error=true
+                break
+              fi
+
+              cat "$RUNNER_TEMP/update.json"
+
+              # update 返回成功；等待目标规格 + RUNNING，最多 10 分钟。
+              target_ok=false
+              for _ in $(seq 1 40); do
+                oci compute instance get --instance-id "$instance_id" --output json > "$RUNNER_TEMP/post.json"
+                now_ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((.ocpus // 0) | floor)' "$RUNNER_TEMP/post.json")
+                now_mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((."memoryInGBs" // .memoryInGbs // ."memory-in-gbs" // 0) | floor)' "$RUNNER_TEMP/post.json")
+                now_state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/post.json")
+                echo "post: ${now_ocpus} OCPU / ${now_mem} GB, state=$now_state"
+
+                if [ "$now_ocpus" = "$target_ocpus" ] && [ "$now_mem" = "$target_mem" ] && [ "$now_state" = "RUNNING" ]; then
+                  target_ok=true
                   break
                 fi
-                continue
+                if [ "$now_state" = "STOPPED" ]; then
+                  break
+                fi
+                sleep 15
+              done
+
+              if [ "$target_ok" = true ]; then
+                round_ok=true
+                if [ "$target_ocpus" = "$FULL_OCPUS" ] && [ "$target_mem" = "$FULL_MEMORY_GBS" ]; then
+                  echo "✅ 已扩到 4C24G"
+                  stop=true
+                else
+                  echo "✅ 中间步 $target_label 成功，立即进入下一轮继续冲 4C24G"
+                fi
+                break
               fi
-              echo "::error::$target_label update 失败（非容量原因）"
-              hard_failure=true
+
+              echo "::warning::$target_label update 返回成功但 10 分钟内规格未生效"
+              hard_error=true
               break
-            fi
-
-            cat "$RUNNER_TEMP/update.json"
-
-            # 等待目标规格 + RUNNING，最多 10 分钟。
-            candidate_ok=false
-            for _ in $(seq 1 40); do
-              oci compute instance get --instance-id "$INSTANCE_ID" --output json > "$RUNNER_TEMP/post.json"
-              cur_ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((.ocpus // 0) | floor)' "$RUNNER_TEMP/post.json")
-              cur_mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((."memoryInGBs" // .memoryInGbs // ."memory-in-gbs" // 0) | floor)' "$RUNNER_TEMP/post.json")
-              cur_state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/post.json")
-              echo "post: ${cur_ocpus} OCPU / ${cur_mem} GB, state=$cur_state"
-
-              if [ "$cur_ocpus" = "$target_ocpus" ] && [ "$cur_mem" = "$target_memory" ] && [ "$cur_state" = "RUNNING" ]; then
-                candidate_ok=true
-                break
-              fi
-              if [ "$cur_state" = "STOPPED" ]; then
-                echo "::warning::实例停在 STOPPED 且规格未变"
-                break
-              fi
-              sleep 15
             done
 
-            if [ "$candidate_ok" = true ]; then
-              resize_ok=true
-              echo "SELECTED_OCPUS=$target_ocpus" >> "$GITHUB_ENV"
-              echo "SELECTED_MEMORY=$target_memory" >> "$GITHUB_ENV"
-              echo "SELECTED_LABEL=$target_label" >> "$GITHUB_ENV"
+            if [ "$stop" = true ]; then
               break
             fi
 
-            echo "::warning::$target_label update 返回成功但 10 分钟内规格未生效，停止候选循环"
-            hard_failure=true
-            break
+            if [ "$round_ok" = true ]; then
+              # 中间步成功：立即下一轮，重新读规格并只尝试还没完成的步骤。
+              continue
+            fi
+
+            if [ "$hard_error" = true ]; then
+              echo "本轮遇到硬错误，等 5 分钟再试"
+              sleep 300
+              continue
+            fi
+
+            echo "本轮所有候选都 Out of host capacity，等 9~11 分钟再试"
+            sleep $((540 + RANDOM % 120))
           done
 
-          if [ "$resize_ok" = true ]; then
-            echo "resize_ok=true" >> "$GITHUB_ENV"
-            exit 0
+          if [ "$stop" = true ]; then
+            echo "stop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "5 小时窗口结束，续链下一段"
+            echo "chain=true" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "resize_ok=false" >> "$GITHUB_ENV"
-          if [ "$hard_failure" = true ]; then
-            echo "::error::resize 遇到非容量错误或规格长时间未生效"
-            exit 1
-          fi
-
-          # 所有候选都是 Out of host capacity：视为正常等待，让 schedule 下轮再试，不让 run 变红。
-          echo "capacity_exhausted=true" >> "$GITHUB_ENV"
-          echo "::warning::本轮所有候选都遇到 Out of host capacity；下次 schedule 继续"
-          exit 0
-
-      - name: Verify and maybe disable workflow
-        if: always() && env.resize_ok == 'true'
+      - name: Disable workflow on success
+        if: steps.loop.outputs.stop == 'true'
         env:
-          INSTANCE_ID: ${{ steps.inspect.outputs.instance_id }}
-          FULL_OCPUS: ${{ env.FULL_OCPUS }}
-          FULL_MEMORY_GBS: ${{ env.FULL_MEMORY_GBS }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          oci compute instance get --instance-id "$INSTANCE_ID" --output json > "$RUNNER_TEMP/final.json"
-          ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((.ocpus // 0) | floor)' "$RUNNER_TEMP/final.json")
-          mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((."memoryInGBs" // .memoryInGbs // ."memory-in-gbs" // 0) | floor)' "$RUNNER_TEMP/final.json")
-          state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/final.json")
+          gh workflow disable oci-arm-resize.yml --repo "$GITHUB_REPOSITORY" || true
 
-          if [ "$ocpus" = "$FULL_OCPUS" ] && [ "$mem" = "$FULL_MEMORY_GBS" ]; then
-            gh workflow disable oci-arm-resize.yml --repo "$GITHUB_REPOSITORY" || true
-            {
-              echo "### 扩容成功"
-              echo "- 实例：$INSTANCE_ID"
-              echo "- 新规格：${ocpus} OCPU / ${mem} GB"
-              echo "- 状态：$state"
-              echo "- 本 workflow 已停用"
-              echo
-              echo "请在 24~48h 后检查 OCI Billing → Cost Analysis："
-              echo "4C24G 应落在 paid tenancy 的 3,000/18,000 免费额度内；若产生费用，改回 2C12G。"
-            } >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$ocpus" = "${SELECTED_OCPUS:-}" ] && [ "$mem" = "${SELECTED_MEMORY:-}" ]; then
-            {
-              echo "### 分步扩容成功（尚未到 4C24G）"
-              echo "- 实例：$INSTANCE_ID"
-              echo "- 当前规格：${ocpus} OCPU / ${mem} GB（${SELECTED_LABEL:-}）"
-              echo "- 状态：$state"
-              echo "- workflow 保持启用；下一轮只查还没完成的步骤，已完成的步骤自动 SKIPPED。"
-              echo
-              echo "注意：分步扩容 = 多次重启。若你不想再分步，把 step_preference 改成 full_only。"
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::error::规格校验失败：当前 ${ocpus} OCPU / ${mem} GB，期望 ${SELECTED_LABEL:-未知}"
-            exit 1
-          fi
-
-      - name: Recover instance if resize failed
-        if: always() && env.resize_attempted == 'true' && env.resize_ok != 'true'
+      - name: Chain next 5-hour window
+        if: steps.loop.outputs.chain == 'true'
         env:
-          INSTANCE_ID: ${{ steps.inspect.outputs.instance_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-
-          state="UNKNOWN"
-          for _ in $(seq 1 30); do
-            oci compute instance get --instance-id "$INSTANCE_ID" --output json > "$RUNNER_TEMP/recover.json"
-            state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/recover.json")
-            echo "recover: state=$state"
-            case "$state" in
-              RUNNING)
-                echo "实例已恢复 RUNNING"
-                exit 0
-                ;;
-              STOPPED)
-                break
-                ;;
-              STOPPING|STARTING|REBOOTING|PROVISIONING|TERMINATING)
-                sleep 10
-                ;;
-              *)
-                echo "::warning::未知状态 $state，停止恢复"
-                exit 0
-                ;;
-            esac
-          done
-
-          if [ "$state" = "STOPPED" ]; then
-            echo "实例被留在 STOPPED，重新启动"
-            oci compute instance action \
-              --instance-id "$INSTANCE_ID" \
-              --action START \
-              --wait-for-state RUNNING \
-              --max-wait-seconds 900 \
-              --wait-interval-seconds 15
-          fi
-
-      - name: Summary when capacity available but dry-run
-        if: always() && steps.inspect.outputs.already != 'true' && steps.capacity.outputs.available == 'true' && github.event_name == 'workflow_dispatch' && inputs.dry_run == true
-        env:
-          CANDIDATES: ${{ steps.capacity.outputs.candidates }}
-        run: |
-          {
-            echo "### 有容量，但这是 dry-run"
-            echo "- 候选顺序：$(jq -r '[.[].label] | join(" -> ")' <<<"$CANDIDATES")"
-            echo "- 第一个目标：${{ steps.capacity.outputs.target_label }}（${{ steps.capacity.outputs.target_ocpus }} OCPU / ${{ steps.capacity.outputs.target_memory }} GB）"
-            echo "- 未执行 resize。要真正执行，手动 dispatch 时把 dry_run 设为 false。"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Summary when no capacity
-        if: always() && steps.inspect.outputs.already != 'true' && (steps.capacity.outputs.available != 'true' || env.capacity_exhausted == 'true')
-        run: |
-          {
-            echo "### 本轮没有扩容成功"
-            echo "- 4C24G: ${{ steps.capacity.outputs.status_full }}"
-            echo "- 4C6G: ${{ steps.capacity.outputs.status_cpu }}"
-            echo "- 2C24G: ${{ steps.capacity.outputs.status_mem }}"
-            echo "- 2C12G: ${{ steps.capacity.outputs.status_small_mem }}"
-            echo "- SKIPPED = 该步已成功或会降配，本轮不再查询。"
-            if [ "${capacity_exhausted:-}" = "true" ]; then
-              echo
-              echo "capacity report 说 AVAILABLE，但实际 update 遇到 **Out of host capacity**（report 是 best-effort，会假阳性）；下轮继续。"
-            fi
-            echo
-            echo "下个 schedule（每 10 分钟）继续查；无容量时不会改实例。"
-          } >> "$GITHUB_STEP_SUMMARY"
+          gh workflow run oci-arm-resize.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f dry_run=false \
+            -f step_preference="$PREFERENCE"
