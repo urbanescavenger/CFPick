@@ -25,6 +25,10 @@ name: oci-arm-resize
 #     下轮继续冲 4C24G；到达 4C24G 后自动 disable。
 #   - update 失败/实例被留在 STOPPED 时，自动 START 恢复。
 #   - workflow_dispatch 默认 dry_run=true：只查规格和容量，不改实例。
+#   - 定时 resize 需要 repo variable OCI_RESIZE_ENABLED=true 才会执行；
+#     未设置时 schedule 只创建 skipped run，手动 dispatch 不受影响。
+#     启用：gh variable set OCI_RESIZE_ENABLED --repo <owner/repo> --body true
+#     暂停：gh variable delete OCI_RESIZE_ENABLED --repo <owner/repo>
 #
 # 可选：添加 OCI_INSTANCE_ID secret 直接指定实例，避免按 display-name 查找。
 
@@ -66,6 +70,8 @@ env:
 
 jobs:
   resize:
+    # 安全闸：定时任务必须显式打开 repo variable 才会 resize；手动 dispatch 不受影响。
+    if: github.event_name != 'schedule' || vars.OCI_RESIZE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
 
