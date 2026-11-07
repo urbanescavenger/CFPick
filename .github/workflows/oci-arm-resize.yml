@@ -117,8 +117,27 @@ jobs:
           SMALL_MEM_STEP_MEMORY_GBS: ${{ env.SMALL_MEM_STEP_MEMORY_GBS }}
           INSTANCE_NAME: ${{ env.INSTANCE_NAME }}
           PREFERENCE: ${{ env.PREFERENCE }}
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
         run: |
           set -euo pipefail
+
+          notify() {
+            local message="$1"
+            local title="${2:-CFPick OCI}"
+            if [ -z "${NOTIFY_WEBHOOK_URL:-}" ]; then
+              return 0
+            fi
+            local payload
+            payload=$(jq -n --arg title "$title" --arg message "$message" \
+              '{action:"chat", title:$title, message:$message, url:""}')
+            curl -sS --max-time 15 -X POST "$NOTIFY_WEBHOOK_URL" \
+              -H 'Content-Type: application/json' \
+              -H 'Accept-Encoding: identity' \
+              -d "$payload" > /dev/null 2>&1 \
+              || echo "::warning::notification send failed"
+          }
+
+          notify "OCI resize 新一轮开始（run $GITHUB_RUN_ID，偏好 $PREFERENCE）" "CFPick OCI"
 
           deadline=$(( $(date +%s) + 18000 ))   # 5 小时
           attempt=0
@@ -217,6 +236,7 @@ jobs:
 
             if [ "$cur_ocpus" = "$FULL_OCPUS" ] && [ "$cur_mem" = "$FULL_MEMORY_GBS" ]; then
               echo "✅ 已经是 4C24G，停止"
+              notify "✅ 已经是 4C24G（run $GITHUB_RUN_ID），workflow 即将停用" "CFPick OCI"
               stop=true
               break
             fi
@@ -313,9 +333,11 @@ jobs:
                 round_ok=true
                 if [ "$target_ocpus" = "$FULL_OCPUS" ] && [ "$target_mem" = "$FULL_MEMORY_GBS" ]; then
                   echo "✅ 已扩到 4C24G"
+                  notify "✅ 已扩到 4C24G（run $GITHUB_RUN_ID），workflow 即将停用" "CFPick OCI"
                   stop=true
                 else
                   echo "✅ 中间步 $target_label 成功，立即进入下一轮继续冲 4C24G"
+                  notify "分步扩容成功：$target_label；继续冲 4C24G（run $GITHUB_RUN_ID）" "CFPick OCI"
                 fi
                 break
               fi
