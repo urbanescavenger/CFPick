@@ -139,8 +139,8 @@ jobs:
           oci compute instance get --instance-id "$instance_id" --output json > "$RUNNER_TEMP/instance.json"
           shape=$(jq -r '(.data // .) | .shape // "UNKNOWN"' "$RUNNER_TEMP/instance.json")
           name=$(jq -r '(.data // .) | (."display-name" // .displayName // "UNKNOWN")' "$RUNNER_TEMP/instance.json")
-          ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | (.ocpus // 0)' "$RUNNER_TEMP/instance.json")
-          mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | (."memoryInGBs" // .memoryInGbs // 0)' "$RUNNER_TEMP/instance.json")
+          ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((.ocpus // 0) | floor)' "$RUNNER_TEMP/instance.json")
+          mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((."memoryInGBs" // .memoryInGbs // ."memory-in-gbs" // 0) | floor)' "$RUNNER_TEMP/instance.json")
           state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/instance.json")
 
           echo "instance: $name ($instance_id)"
@@ -411,8 +411,8 @@ jobs:
           resize_ok=false
           for _ in $(seq 1 40); do
             oci compute instance get --instance-id "$INSTANCE_ID" --output json > "$RUNNER_TEMP/post.json"
-            ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | (.ocpus // 0)' "$RUNNER_TEMP/post.json")
-            mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | (."memoryInGBs" // .memoryInGbs // 0)' "$RUNNER_TEMP/post.json")
+            ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((.ocpus // 0) | floor)' "$RUNNER_TEMP/post.json")
+            mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((."memoryInGBs" // .memoryInGbs // ."memory-in-gbs" // 0) | floor)' "$RUNNER_TEMP/post.json")
             state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/post.json")
             echo "post: ${ocpus} OCPU / ${mem} GB, state=$state"
 
@@ -449,8 +449,8 @@ jobs:
         run: |
           set -euo pipefail
           oci compute instance get --instance-id "$INSTANCE_ID" --output json > "$RUNNER_TEMP/final.json"
-          ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | (.ocpus // 0)' "$RUNNER_TEMP/final.json")
-          mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | (."memoryInGBs" // .memoryInGbs // 0)' "$RUNNER_TEMP/final.json")
+          ocpus=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((.ocpus // 0) | floor)' "$RUNNER_TEMP/final.json")
+          mem=$(jq -r '(.data // .) | ((."shape-config" // .shapeConfig) // {}) | ((."memoryInGBs" // .memoryInGbs // ."memory-in-gbs" // 0) | floor)' "$RUNNER_TEMP/final.json")
           state=$(jq -r '(.data // .) | (."lifecycle-state" // .lifecycleState // "UNKNOWN")' "$RUNNER_TEMP/final.json")
 
           if [ "$ocpus" = "$FULL_OCPUS" ] && [ "$mem" = "$FULL_MEMORY_GBS" ]; then
