@@ -76,11 +76,27 @@ jobs:
       - name: Download Snapshot OpenWrt SDK
         run: |
           mkdir -p /tmp/SNAPSDK
-          curl --http1.1 -SLk -C - --connect-timeout 30 \
-            --retry 5 --retry-delay 5 --retry-all-errors \
-            --max-time 3600 --speed-limit 10240 --speed-time 60 \
-            "${{ steps.snapsdk.outputs.url }}" \
-            -o /tmp/SNAPSDK.tar.zst
+          url="${{ steps.snapsdk.outputs.url }}"
+          file="${url##*/}"
+          ok=false
+          for base in \
+            "https://downloads.openwrt.org/snapshots/targets/x86/64" \
+            "https://mirrors.ustc.edu.cn/openwrt/snapshots/targets/x86/64"; do
+            echo "尝试镜像: $base/$file"
+            if curl --http1.1 -SLk -C - --connect-timeout 30 \
+                --retry 3 --retry-delay 5 --retry-all-errors \
+                --max-time 1800 --speed-limit 10240 --speed-time 60 \
+                "$base/$file" \
+                -o /tmp/SNAPSDK.tar.zst; then
+              ok=true
+              break
+            fi
+            echo "镜像失败，换下一个: $base"
+          done
+          if [ "$ok" != "true" ]; then
+            echo "所有镜像都下载失败"
+            exit 1
+          fi
           zstd -d /tmp/SNAPSDK.tar.zst
           tar xf /tmp/SNAPSDK.tar --strip-components=1 -C /tmp/SNAPSDK
 
