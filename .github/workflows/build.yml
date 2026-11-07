@@ -46,7 +46,7 @@ jobs:
         id: snapsdk
         run: |
           base="https://downloads.openwrt.org/snapshots/targets/x86/64/"
-          file="$(curl -sSLk "$base" | grep -oE 'openwrt-sdk-x86-64_[A-Za-z0-9._-]+\.tar\.zst' | head -n1)"
+          file="$(curl --http1.1 -sSLk --retry 3 --retry-all-errors "$base" | grep -oE 'openwrt-sdk-x86-64_[A-Za-z0-9._-]+\.tar\.zst' | head -n1)"
           [ -n "$file" ] || { echo "No snapshot SDK found at $base"; exit 1; }
           echo "url=${base}${file}" >> "$GITHUB_OUTPUT"
           echo "Resolved snapshot SDK: ${base}${file}"
@@ -65,7 +65,7 @@ jobs:
       - name: Download Legacy OpenWrt SDK
         run: |
           mkdir -p /tmp/SDK
-          curl -SLk --connect-timeout 30 --retry 2 \
+          curl --http1.1 -SLk --connect-timeout 30 --retry 3 --retry-delay 5 --retry-all-errors \
             "https://archive.openwrt.org/releases/21.02.0/targets/x86/64/openwrt-sdk-21.02.0-x86-64_gcc-8.4.0_musl.Linux-x86_64.tar.xz" \
             -o /tmp/SDK.tar.xz
           tar xf /tmp/SDK.tar.xz --strip-components=1 -C /tmp/SDK
@@ -73,7 +73,7 @@ jobs:
       - name: Download Snapshot OpenWrt SDK
         run: |
           mkdir -p /tmp/SNAPSDK
-          curl -SLk --connect-timeout 30 --retry 2 \
+          curl --http1.1 -SLk --connect-timeout 30 --retry 3 --retry-delay 5 --retry-all-errors \
             "${{ steps.snapsdk.outputs.url }}" \
             -o /tmp/SNAPSDK.tar.zst
           zstd -d /tmp/SNAPSDK.tar.zst
