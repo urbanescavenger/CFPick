@@ -1,13 +1,14 @@
 name: oci-arm-resize
 
 # 目标：自动查容量，优先一次扩到 4 OCPU / 24 GB；4C24G 不可用或实际 update 失败时，
-# 再按“只扩 CPU”（4C6G）或“只扩内存”（2C24G）分步走。
+# 再按“只扩 CPU”（4C6G）、“只扩内存”（2C24G）、更小的“只扩内存”（2C12G）分步走。
 #
 # 行为：
 #   - schedule 每 10 分钟查一次 capacity report（只读，不重启实例）。
 #   - 只查“还没成功、且不会降配”的步骤；某个中间步成功后，下一轮自动 SKIPPED 该步。
-#   - 候选按 preference 排序；4C24G 永远第一。实际 update 遇到 Out of host capacity 时，
-#     自动尝试下一个候选；全部失败则本轮正常结束，下轮继续。
+#   - 候选按 preference 排序；4C24G 永远第一，最后是 2C12G 小步兜底。
+#     实际 update 遇到 Out of host capacity 时，自动尝试下一个候选；
+#     全部失败则本轮正常结束，下轮继续。
 #   - 到达 4C24G 后自动 disable；分步成功则保持启用，继续冲 4C24G。
 #   - update 失败/实例被留在 STOPPED 时，自动 START 恢复。
 #   - workflow_dispatch 默认 dry_run=true：只查规格和容量，不改实例。
@@ -60,6 +61,8 @@ env:
   CPU_STEP_MEMORY_GBS: "6"
   MEM_STEP_OCPUS: "2"
   MEM_STEP_MEMORY_GBS: "24"
+  SMALL_MEM_STEP_OCPUS: "2"
+  SMALL_MEM_STEP_MEMORY_GBS: "12"
   INSTANCE_NAME: "free-arm-1"
   # 默认优先 cpu_first（4C6G）；想优先扩内存，把 capacity 步骤里 PREFERENCE 的 'cpu_first' 改成 'memory_first'。
 
@@ -193,6 +196,8 @@ jobs:
           CPU_STEP_MEMORY_GBS: ${{ env.CPU_STEP_MEMORY_GBS }}
           MEM_STEP_OCPUS: ${{ env.MEM_STEP_OCPUS }}
           MEM_STEP_MEMORY_GBS: ${{ env.MEM_STEP_MEMORY_GBS }}
+          SMALL_MEM_STEP_OCPUS: ${{ env.SMALL_MEM_STEP_OCPUS }}
+          SMALL_MEM_STEP_MEMORY_GBS: ${{ env.SMALL_MEM_STEP_MEMORY_GBS }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -218,9 +223,15 @@ jobs:
             need_mem=true
           fi
 
-          echo "need: full=$need_full cpu=$need_cpu mem=$need_mem"
+          need_small_mem=false
+          if [ "$SMALL_MEM_STEP_OCPUS" -ge "$CURRENT_OCPUS" ] && [ "$SMALL_MEM_STEP_MEMORY_GBS" -ge "$CURRENT_MEMORY" ] \
+             && ! { [ "$CURRENT_OCPUS" = "$SMALL_MEM_STEP_OCPUS" ] && [ "$CURRENT_MEMORY" = "$SMALL_MEM_STEP_MEMORY_GBS" ]; }; then
+            need_small_mem=true
+          fi
 
-          if [ "$need_full" = false ] && [ "$need_cpu" = false ] && [ "$need_mem" = false ]; then
+          echo "need: full=$need_full cpu=$need_cpu mem=$need_mem small_mem=$need_small_mem"
+
+          if [ "$need_full" = false ] && [ "$need_cpu" = false ] && [ "$need_mem" = false ] && [ "$need_small_mem" = false ]; then
             echo "::warning::当前规格已在目标之上，没有可提升的候选；停用 workflow"
             gh workflow disable oci-arm-resize.yml --repo "$GITHUB_REPOSITORY" || true
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -236,10 +247,12 @@ jobs:
             --argjson full "$need_full" \
             --argjson cpu "$need_cpu" \
             --argjson mem "$need_mem" \
+            --argjson small_mem "$need_small_mem" \
             '[
               (if $full then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":4,"memoryInGBs":24}} else empty end),
               (if $cpu then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":4,"memoryInGBs":6}} else empty end),
-              (if $mem then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":2,"memoryInGBs":24}} else empty end)
+              (if $mem then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":2,"memoryInGBs":24}} else empty end),
+              (if $small_mem then {"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":2,"memoryInGBs":12}} else empty end)
             ]')
           echo "query shapes: $SHAPES"
 
@@ -301,13 +314,16 @@ jobs:
           status_full="SKIPPED"; count_full="null"
           status_cpu="SKIPPED";  count_cpu="null"
           status_mem="SKIPPED";  count_mem="null"
+          status_small_mem="SKIPPED"; count_small_mem="null"
           if [ "$need_full" = true ]; then status_full=$(status_for "$FULL_OCPUS" "$FULL_MEMORY_GBS"); count_full=$(count_for "$FULL_OCPUS" "$FULL_MEMORY_GBS"); fi
           if [ "$need_cpu" = true ];  then status_cpu=$(status_for "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS"); count_cpu=$(count_for "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS"); fi
           if [ "$need_mem" = true ];  then status_mem=$(status_for "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS"); count_mem=$(count_for "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS"); fi
+          if [ "$need_small_mem" = true ]; then status_small_mem=$(status_for "$SMALL_MEM_STEP_OCPUS" "$SMALL_MEM_STEP_MEMORY_GBS"); count_small_mem=$(count_for "$SMALL_MEM_STEP_OCPUS" "$SMALL_MEM_STEP_MEMORY_GBS"); fi
 
           echo "full 4C24G: $status_full (count=$count_full)"
           echo "cpu  4C6G : $status_cpu (count=$count_cpu)"
           echo "mem  2C24G: $status_mem (count=$count_mem)"
+          echo "small 2C12G: $status_small_mem (count=$count_small_mem)"
 
           count_ok() {
             local c="$1"
@@ -316,10 +332,11 @@ jobs:
             return 1
           }
 
-          avail_full=false; avail_cpu=false; avail_mem=false
+          avail_full=false; avail_cpu=false; avail_mem=false; avail_small_mem=false
           if [ "$need_full" = true ] && [ "$status_full" = "AVAILABLE" ] && count_ok "$count_full"; then avail_full=true; fi
           if [ "$need_cpu" = true ]  && [ "$status_cpu"  = "AVAILABLE" ] && count_ok "$count_cpu";  then avail_cpu=true;  fi
           if [ "$need_mem" = true ]  && [ "$status_mem"  = "AVAILABLE" ] && count_ok "$count_mem";  then avail_mem=true;  fi
+          if [ "$need_small_mem" = true ] && [ "$status_small_mem" = "AVAILABLE" ] && count_ok "$count_small_mem"; then avail_small_mem=true; fi
 
           # 候选按优先级排：full 永远第一；中间步按 preference 排序。
           # capacity report 假阳性、实际 update 失败时，自动降级尝试下一步。
@@ -341,6 +358,7 @@ jobs:
               if [ "$avail_cpu" = true ]; then add_candidate "$CPU_STEP_OCPUS" "$CPU_STEP_MEMORY_GBS" "4C6G (cpu step)" false; fi
               if [ "$avail_mem" = true ]; then add_candidate "$MEM_STEP_OCPUS" "$MEM_STEP_MEMORY_GBS" "2C24G (memory step)" false; fi
             fi
+            if [ "$avail_small_mem" = true ]; then add_candidate "$SMALL_MEM_STEP_OCPUS" "$SMALL_MEM_STEP_MEMORY_GBS" "2C12G (small memory step)" false; fi
           fi
 
           candidate_count=$(jq 'length' <<<"$candidates")
@@ -360,9 +378,11 @@ jobs:
           echo "status_full=$status_full" >> "$GITHUB_OUTPUT"
           echo "status_cpu=$status_cpu" >> "$GITHUB_OUTPUT"
           echo "status_mem=$status_mem" >> "$GITHUB_OUTPUT"
+          echo "status_small_mem=$status_small_mem" >> "$GITHUB_OUTPUT"
           echo "count_full=$count_full" >> "$GITHUB_OUTPUT"
           echo "count_cpu=$count_cpu" >> "$GITHUB_OUTPUT"
           echo "count_mem=$count_mem" >> "$GITHUB_OUTPUT"
+          echo "count_small_mem=$count_small_mem" >> "$GITHUB_OUTPUT"
           echo "available=$available" >> "$GITHUB_OUTPUT"
           echo "target_ocpus=$target_ocpus" >> "$GITHUB_OUTPUT"
           echo "target_memory=$target_memory" >> "$GITHUB_OUTPUT"
@@ -378,6 +398,7 @@ jobs:
             echo "| 4C24G (full) | $status_full | $count_full | $avail_full |"
             echo "| 4C6G (cpu step) | $status_cpu | $count_cpu | $avail_cpu |"
             echo "| 2C24G (memory step) | $status_mem | $count_mem | $avail_mem |"
+            echo "| 2C12G (small memory step) | $status_small_mem | $count_small_mem | $avail_small_mem |"
             echo
             echo "SKIPPED = 该步已成功或会降配，本轮不再查询。"
             if [ "$candidate_count" -gt 0 ]; then
@@ -611,6 +632,7 @@ jobs:
             echo "- 4C24G: ${{ steps.capacity.outputs.status_full }}"
             echo "- 4C6G: ${{ steps.capacity.outputs.status_cpu }}"
             echo "- 2C24G: ${{ steps.capacity.outputs.status_mem }}"
+            echo "- 2C12G: ${{ steps.capacity.outputs.status_small_mem }}"
             echo "- SKIPPED = 该步已成功或会降配，本轮不再查询。"
             if [ "${capacity_exhausted:-}" = "true" ]; then
               echo
