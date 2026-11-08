@@ -645,6 +645,79 @@
 		toast(added ? ('已导入 ' + added + ' 个节点，记得点击「保存节点」') : '没有可导入的新链接');
 	}
 
+	// 折叠多选展开时默认会撑高所在行（表格行、grid 行），长节点列表能把整行
+	// 拉到几百像素。这里把展开的列表改成 fixed 悬浮层：脱离文档流，不改变
+	// 行高；页面滚动或窗口缩放时重新贴回 summary 下方，下方空间不足则向上翻。
+	function floatPickerList(details, list) {
+		let onScroll = null;
+		let onResize = null;
+
+		function detach() {
+			if (onScroll) window.removeEventListener('scroll', onScroll, true);
+			if (onResize) window.removeEventListener('resize', onResize);
+			onScroll = null;
+			onResize = null;
+		}
+
+		function reset() {
+			list.classList.remove('floating');
+			['position', 'top', 'bottom', 'left', 'minWidth', 'maxWidth', 'maxHeight', 'marginTop']
+				.forEach((prop) => { list.style[prop] = ''; });
+		}
+
+		function place() {
+			if (!details.isConnected) {
+				detach();
+				return;
+			}
+			const rect = details.getBoundingClientRect();
+			const margin = 8;
+			const gap = 6;
+			const vw = document.documentElement.clientWidth;
+			const vh = document.documentElement.clientHeight;
+			const cssMin = parseFloat(getComputedStyle(list).minWidth) || 0;
+			const width = Math.max(170, cssMin, Math.round(rect.width));
+			const natural = Math.min(list.scrollHeight + 2, 190);
+			const below = vh - rect.bottom - gap - margin;
+			const above = rect.top - gap - margin;
+
+			list.classList.add('floating');
+			list.style.position = 'fixed';
+			list.style.marginTop = '0';
+			list.style.minWidth = width + 'px';
+			list.style.maxWidth = Math.min(360, vw - margin * 2) + 'px';
+			list.style.left = Math.max(margin,
+				Math.min(rect.left, vw - margin - width)) + 'px';
+
+			if (natural > below && above > below) {
+				list.style.top = 'auto';
+				list.style.bottom = Math.round(vh - rect.top + gap) + 'px';
+				list.style.maxHeight = Math.max(90, Math.min(190, above)) + 'px';
+			}
+			else {
+				list.style.bottom = 'auto';
+				list.style.top = Math.round(rect.bottom + gap) + 'px';
+				list.style.maxHeight = Math.max(90, Math.min(190, below)) + 'px';
+			}
+		}
+
+		details.addEventListener('toggle', () => {
+			if (details.open) {
+				place();
+				if (!onScroll) {
+					onScroll = () => place();
+					onResize = () => place();
+					window.addEventListener('scroll', onScroll, true);
+					window.addEventListener('resize', onResize);
+				}
+			}
+			else {
+				detach();
+				reset();
+			}
+		});
+	}
+
 	// ── IP lists ────────────────────────────────────────────────────────
 	// 与 LuCI 设置页「国家过滤」保持一致；源列表里出现列表外的两位码时，
 	// buildCountryPicker 会把它们补进选项，避免保存时被悄悄清掉。
@@ -691,6 +764,7 @@
 
 		details.appendChild(summary);
 		details.appendChild(list);
+		floatPickerList(details, list);
 		details._values = () => Array.from(
 			list.querySelectorAll('input[type="checkbox"]:checked'))
 			.map((box) => box.value);
@@ -980,6 +1054,7 @@
 
 		details.appendChild(summary);
 		details.appendChild(list);
+		floatPickerList(details, list);
 		details._nodeValues = () => Array.from(
 			list.querySelectorAll('input[type="checkbox"]:checked'))
 			.map((box) => box.value);
