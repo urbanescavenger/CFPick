@@ -1369,6 +1369,8 @@ nt_download_phase() {
     local _W=$1 _rfile=$2 _Wn=$3 _cnt=$4 _durl=$5 _tmo=$6 _port=$7 _flag=$8
     local _rows="${_rfile}.rows" _out="${_rfile}.dl" _line _ip _spd _hdr
     local _i=0 _n _tested=0 _failed=0 _best_ip='' _best_spd=0
+    # 供 nt_download_stage 判断该节点是否需要复测一轮；早退（没有候选行）不算失败。
+    NT_DL_FAILED=0
     [ -f "$_rfile" ] || return 0
     _n=$(awk 'END{print NR+0}' "$_rfile" 2>/dev/null)
     [ "$_n" -gt 1 ] || return 0
@@ -1429,6 +1431,7 @@ nt_download_phase() {
     else
         rm -f "$_out"
         echolog "下载测速 [${_Wn}] 未取得任何有效速度（测试 URL 可能经该节点不可达），保留延迟排序结果"
+        NT_DL_FAILED=1
     fi
     return 0
 }
@@ -1446,13 +1449,48 @@ nt_download_worker() {
         "${DL_TEST_TIME:-10}" "$_port" "$_flag"
 }
 
+# 下载全部失败的节点：等其他 worker 的下载结束后，按现有 result.csv + 节点 address
+# 重新完整复测一轮（延迟探测 + 下载实测）。复测拿到有效下载速度才替换原结果；
+# 仍全失败则保留上一轮延迟排序结果。
+# 参数: $1=idx $2=node $3=origaddr $4=原结果文件 $5=socks_port
+nt_retest_failed_worker() {
+    local _idx=$1 _W=$2 _orig=$3 _rfile=$4 _port=$5
+    local _rf="${RUN_DIR}/retest_ips_${_W}.txt"
+    local _tmp="${RUN_DIR}/result.csv.retest.${_W}"
+    local _flag="${NODE_TEST_FLAG_BASE}_${_idx}_rt" _wn
+    build_retest_list_one "$_W" "${count:-30}" || return 0
+    [ -s "$_rf" ] || return 0
+    rm -f "$_tmp" 2>/dev/null
+    echolog "复测 [${_W}] 开始：该节点下载全部失败，用现有 result.csv/节点地址再测一轮"
+    node_test_worker "$_idx" "$_W" "$_orig" "$_tmp" "$_rf" \
+        "${probe_url:-}" "${timeout:-5}" "${probes:-3}" "$_port" "$_flag"
+    if [ -z "$(first_result_ip "$_tmp")" ]; then
+        rm -f "$_tmp"
+        echolog "复测 [${_W}] 没有通过延迟筛选的 IP，保留上一轮结果"
+        return 0
+    fi
+    _wn="$(uci -q get "passwall.${_W}.remarks" 2>/dev/null)"; _wn="${_wn:-${_W}}"
+    NT_DL_FAILED=0
+    nt_download_phase "$_W" "$_tmp" "$_wn" "${DL_TEST_COUNT:-5}" \
+        "${DL_TEST_URL:-https://speed.cloudflare.com/__down?bytes=10000000}" \
+        "${DL_TEST_TIME:-10}" "$_port" "${_flag}_dl"
+    if [ "$NT_DL_FAILED" != "1" ]; then
+        mv -f "$_tmp" "$_rfile"
+        echolog "复测 [${_wn}] 下载成功，已用复测结果替换该节点结果"
+    else
+        rm -f "$_tmp"
+        echolog "复测 [${_wn}] 下载仍全部失败，保留上一轮结果"
+    fi
+    return 0
+}
+
 # 下载实测阶段（所有 worker 停止后统一执行）：按映射文件逐 worker 串行实测。
 # 与一轮延迟测试分离的原因：worker 还在跑时，其 SOCKS、uci 改写和探测流量都会和下载
 # 争抢路由器 WAN 带宽与 CPU，边测边下载会让各 IP 的速度互相污染、无法横向比较。
 # 串行由主进程的顺序循环保证，不依赖跨进程锁。
 # 参数: $1=worker 映射文件（idx \t node \t origaddr，与 NT_ORIG_FILE 同格式）
 nt_download_stage() {
-    local _map=$1 _i _W _orig _rfile
+    local _map=$1 _i _W _orig _rfile _failed="" _item _idx _rest
     [ "${DL_TEST_ENABLED:-1}" = "1" ] || return 0
     [ -f "$_map" ] || return 0
     # 下载结果决定各节点写回的最优 IP，与写回同属不可中断的收尾：提前打 .nt_committing，
@@ -1467,8 +1505,27 @@ nt_download_stage() {
     while read -r _i _W _orig; do
         [ -n "$_W" ] || continue
         _rfile="${RUN_DIR}/result.csv.tmp.$_W"
+        NT_DL_FAILED=0
         nt_download_worker "$_W" "$_rfile" "$((48900 + _i - 1))" "${NODE_TEST_FLAG_BASE}_${_i}_dl"
+        [ "$NT_DL_FAILED" = "1" ] && _failed="$_failed ${_i}:${_W}:${_orig}"
     done < "$_map"
+
+    # 其他 worker 的下载全部结束后，对下载全部失败的节点各完整复测一轮。
+    if [ -n "$_failed" ]; then
+        if [ -f "${RUN_DIR}/.user_stop" ]; then
+            echolog "用户已停止，跳过下载失败节点的复测"
+            return 0
+        fi
+        echolog "下载全部失败的 worker:${_failed}；其他 worker 下载结束后各复测一轮"
+        for _item in $_failed; do
+            _idx=${_item%%:*}
+            _rest=${_item#*:}
+            _W=${_rest%%:*}
+            _orig=${_rest#*:}
+            nt_retest_failed_worker "$_idx" "$_W" "$_orig" \
+                "${RUN_DIR}/result.csv.tmp.${_W}" "$((48900 + _idx - 1))"
+        done
+    fi
     return 0
 }
 
