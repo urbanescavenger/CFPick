@@ -661,8 +661,8 @@
 
 		function reset() {
 			list.classList.remove('floating');
-			['position', 'top', 'bottom', 'left', 'minWidth', 'maxWidth', 'maxHeight', 'marginTop']
-				.forEach((prop) => { list.style[prop] = ''; });
+			['position', 'top', 'bottom', 'left', 'width', 'minWidth', 'maxWidth',
+				'maxHeight', 'marginTop'].forEach((prop) => { list.style[prop] = ''; });
 		}
 
 		function place() {
@@ -670,13 +670,21 @@
 				detach();
 				return;
 			}
-			const rect = details.getBoundingClientRect();
+			// 注意：details 展开后的 rect 包含列表本身的高度，拿它当锚点会把
+			// 浮层再往下推一整个列表的高度（看起来像脱离输入框的弹窗）。
+			// 锚点必须是 summary。
+			const anchor = details.querySelector('summary') || details;
+			const rect = anchor.getBoundingClientRect();
 			const margin = 8;
 			const gap = 6;
 			const vw = document.documentElement.clientWidth;
 			const vh = document.documentElement.clientHeight;
-			const cssMin = parseFloat(getComputedStyle(list).minWidth) || 0;
-			const width = Math.max(170, cssMin, Math.round(rect.width));
+			// 不要从 list 自己的 computedStyle 读宽度：悬浮层一旦设过宽度，
+			// 下一次定位会把上次的值再读回来，越放越宽。国家码多选需要两列，
+			// 至少 240px；节点多选至少 170px。
+			const cssMin = list.classList.contains('country-picker') ? 240 : 170;
+			const width = Math.min(Math.max(cssMin, Math.round(rect.width)),
+				vw - margin * 2);
 			const natural = Math.min(list.scrollHeight + 2, 190);
 			const below = vh - rect.bottom - gap - margin;
 			const above = rect.top - gap - margin;
@@ -684,8 +692,9 @@
 			list.classList.add('floating');
 			list.style.position = 'fixed';
 			list.style.marginTop = '0';
-			list.style.minWidth = width + 'px';
-			list.style.maxWidth = Math.min(360, vw - margin * 2) + 'px';
+			list.style.width = width + 'px';
+			list.style.minWidth = '0';
+			list.style.maxWidth = 'none';
 			list.style.left = Math.max(margin,
 				Math.min(rect.left, vw - margin - width)) + 'px';
 

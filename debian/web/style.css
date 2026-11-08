@@ -217,7 +217,7 @@ table.data td.ip { font-family: var(--mono); }
    避免长节点列表把表格行 / grid 行撑到几百像素高。 */
 .node-picker-list.floating {
   margin-top: 0; z-index: 70;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
 }
 /* 国家码多选：沿用 node-picker 的交互，选项排两列，少滚动。 */
 .country-picker { min-width: 150px; }
