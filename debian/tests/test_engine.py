@@ -75,6 +75,10 @@ class DownloadRetryTests(unittest.TestCase):
             "iterate_enabled": False,
         }
         self.log = mock.Mock()
+        # _download_stage 会写全局 state（/var/lib/cfpick），测试里不需要真实落盘。
+        state = mock.patch.object(engine.lock, "write_state")
+        state.start()
+        self.addCleanup(state.stop)
         self.eng = engine.Engine(self.cfg, self.log, "start", "/bin/true",
                                  "mihomo", tempfile.mkdtemp())
         self.node = {"name": "a", "slot": 1, "ip_list": "",
