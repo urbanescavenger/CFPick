@@ -670,6 +670,15 @@
 				detach();
 				return;
 			}
+			// 先把列表移出文档流再测量：展开的瞬间列表还参与表格自动布局，
+			// summary 会被撑宽/挤偏，等列表变成 fixed 后表格又重排回原样。
+			// 先测再改就会用到重排前的坐标（首次打开偏一截，滚动一下才正常）。
+			if (!list.classList.contains('floating')) {
+				list.classList.add('floating');
+				list.style.position = 'fixed';
+				list.style.marginTop = '0';
+				void list.offsetHeight;
+			}
 			// 注意：details 展开后的 rect 包含列表本身的高度，拿它当锚点会把
 			// 浮层再往下推一整个列表的高度（看起来像脱离输入框的弹窗）。
 			// 锚点必须是 summary。
@@ -689,9 +698,6 @@
 			const below = vh - rect.bottom - gap - margin;
 			const above = rect.top - gap - margin;
 
-			list.classList.add('floating');
-			list.style.position = 'fixed';
-			list.style.marginTop = '0';
 			list.style.width = width + 'px';
 			list.style.minWidth = '0';
 			list.style.maxWidth = 'none';
@@ -713,6 +719,11 @@
 		details.addEventListener('toggle', () => {
 			if (details.open) {
 				place();
+				// 表格/字体的重排可能延续到下一帧，再校准一次，避免首帧偏差。
+				requestAnimationFrame(() => {
+					if (details.open)
+						place();
+				});
 				if (!onScroll) {
 					onScroll = () => place();
 					onResize = () => place();
