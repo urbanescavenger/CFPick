@@ -194,6 +194,11 @@
 		if (response.status === 401 && action !== 'hello' && action !== 'login' && action !== 'setup')
 			showAuth('login');
 
+		// rpcd 拒绝未声明参数/未重载插件时会返回 JSON null；给出可操作的提示，
+		// 而不是让浏览器抛 "Cannot read properties of null"。
+		if (payload == null || typeof payload !== 'object')
+			throw new Error('操作台 API 返回空响应（rpcd 插件可能未重载或参数不匹配），请执行 /etc/init.d/rpcd restart 后重试');
+
 		if (!response.ok || payload.ok !== true)
 			throw new Error(payload.error || ('HTTP ' + response.status));
 

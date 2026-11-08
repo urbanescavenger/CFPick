@@ -21,6 +21,15 @@ define Package/$(PKG_NAME)/conffiles
 /etc/config/cfpick
 endef
 
+# rpcd 只在启动时加载 /usr/share/rpcd/ucode/*，升级后不重载会继续跑旧插件；
+# 新控制台按 worker 调用 api_run_start/retest/stop，旧插件会拒绝 node 参数。
+define Package/$(PKG_NAME)/postinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+/etc/init.d/rpcd reload 2>/dev/null || /etc/init.d/rpcd restart 2>/dev/null
+exit 0
+endef
+
 # The standalone engine is maintained once in debian/ (the Debian/Ubuntu
 # implementation) and copied into the package tree at build time; nothing is
 # duplicated in git.  These hooks MUST be defined before including luci.mk:
