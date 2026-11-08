@@ -182,7 +182,7 @@ class Engine:
     def _start_stop_watcher(self):
         def watch():
             while not self._watcher_stop.wait(0.5):
-                if lock.stop_requested() and not self.stop_event.is_set():
+                if lock.stop_requested(os.getpid()) and not self.stop_event.is_set():
                     self.stop_source = "user"
                     self.stop_event.set()
                     lock.write_state(stop_requested=True, phase="stopping")
@@ -791,6 +791,8 @@ def run(mode="start", node_names=None):
     if not other:
         logger.rotate()
         lock.clear_stop()
+    # 清掉本进程可能残留的单 worker 停止请求（上一轮异常退出等）。
+    lock.clear_stop(os.getpid())
     label = "复测现有最优 IP" if mode == "retest" else "Cloudflare IP 测速"
     logger.log("════ %s 开始 ════" % label)
     lock.write_state(

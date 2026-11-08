@@ -198,6 +198,7 @@
 		setText('ov-cron', status.cron ? '已启用' : '未启用');
 		setText('ov-cron-line', status.cron_line || '—');
 		renderDdnsStatus(status.ddns);
+		syncNodeActions();
 	}
 
 	function ddnsText(info) {
@@ -519,6 +520,7 @@
 		nodes.forEach((node, index) => {
 			const tr = document.createElement('tr');
 			tr.dataset.index = String(index);
+			tr.dataset.node = node.name || '';
 
 			const enabledCell = document.createElement('td');
 			const enabled = document.createElement('input');
@@ -527,6 +529,7 @@
 			enabled.addEventListener('change', () => {
 				node.enabled = enabled.checked;
 				tr.classList.toggle('disabled', !enabled.checked);
+				syncNodeActions();
 			});
 			enabledCell.appendChild(enabled);
 			tr.appendChild(enabledCell);
@@ -536,7 +539,10 @@
 			name.type = 'text';
 			name.value = node.name || '';
 			name.placeholder = '节点名称';
-			name.addEventListener('input', () => { node.name = name.value; });
+			name.addEventListener('input', () => {
+				node.name = name.value;
+				tr.dataset.node = name.value;
+			});
 			nameCell.appendChild(name);
 			tr.appendChild(nameCell);
 
@@ -586,6 +592,27 @@
 			tr.appendChild(statusCell);
 
 			const actionCell = document.createElement('td');
+			const actions = document.createElement('div');
+			actions.className = 'row-actions';
+
+			// 每行三个 worker 按钮：测速 / 复测 / 停止。禁用状态由 syncNodeActions()
+			// 按 /api/status 的 workers + download_active 实时同步。
+			[['测速', 'start', 'primary'], ['复测', 'retest', ''], ['停止', 'stop', 'danger']]
+				.forEach(([label, action, cls]) => {
+					const button = document.createElement('button');
+					button.type = 'button';
+					button.className = 'btn small' + (cls ? ' ' + cls : '');
+					button.dataset.nodeAction = action;
+					button.textContent = label;
+					button.addEventListener('click', () => {
+						if (action === 'stop')
+							stopNode(node.name);
+						else
+							startNode(node.name, action === 'retest' ? 'retest' : 'start');
+					});
+					actions.appendChild(button);
+				});
+
 			const remove = document.createElement('button');
 			remove.type = 'button';
 			remove.className = 'btn small danger';
@@ -595,13 +622,15 @@
 				nodes.splice(index, 1);
 				renderNodes();
 			});
-			actionCell.appendChild(remove);
+			actions.appendChild(remove);
+			actionCell.appendChild(actions);
 			tr.appendChild(actionCell);
 
 			if (node.enabled === false) tr.classList.add('disabled');
 			body.appendChild(tr);
 		});
 		$('#nodes-empty').classList.toggle('hidden', nodes.length > 0);
+		syncNodeActions();
 	}
 
 	async function refreshNodeInfo() {
@@ -1843,6 +1872,72 @@
 	}
 
 	// ── actions ─────────────────────────────────────────────────────────
+	// 节点页每行的独立测速：只测一个 worker，允许与其他 worker 并行探测。
+	async function startNode(name, mode) {
+		if (!name) {
+			toast('请先给节点填写名称', true);
+			return;
+		}
+		try {
+			await api('/api/start', {
+				method: 'POST',
+				body: { mode: mode, nodes: [name] },
+			});
+			toast((mode === 'retest' ? '已开始复测：' : '已开始测速：') + name);
+			activateTab('logs');
+			await pollStatus();
+		}
+		catch (e) {
+			toast(e.message, true);
+		}
+	}
+
+	// 只停这一个 worker：它跑完当前 IP 后进入下载实测并写回，其他 worker 继续。
+	async function stopNode(name) {
+		if (!name) return;
+		try {
+			const response = await api('/api/stop', {
+				method: 'POST',
+				body: { nodes: [name] },
+			});
+			toast(response.message || ('已请求停止：' + name));
+			await pollStatus();
+		}
+		catch (e) {
+			toast(e.message, true);
+		}
+	}
+
+	// 按钮状态跟 /api/status 同步：
+	//   * 该 worker 正在测速 → 测速/复测禁用，停止可用；
+	//   * 整个下载/写回阶段（download_active）→ 本页所有按钮禁用；
+	//   * 空闲且未禁用 → 测速/复测可用，停止禁用。
+	function syncNodeActions() {
+		const status = state.status || {};
+		const workers = status.workers || {};
+		const busy = !!status.download_active;
+
+		$$('#nodes-body tr').forEach((row) => {
+			const name = row.dataset.node || '';
+			const info = name ? workers[name] : null;
+			const running = !!info;
+			const stopping = !!(info && info.stopping);
+			const off = row.classList.contains('disabled');
+			row.classList.toggle('running', running);
+
+			row.querySelectorAll('[data-node-action]').forEach((button) => {
+				const action = button.dataset.nodeAction;
+				if (action === 'stop') {
+					button.disabled = !running || stopping || busy;
+					button.textContent = stopping ? '停止中…' : '停止';
+				}
+				else {
+					button.disabled = running || busy || off;
+				}
+			});
+		});
+	}
+
 	async function startTest(mode) {
 		try {
 			await api('/api/start', { method: 'POST', body: { mode: mode } });
