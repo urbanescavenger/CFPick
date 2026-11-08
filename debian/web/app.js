@@ -724,7 +724,7 @@
 			// 不要从 list 自己的 computedStyle 读宽度：悬浮层一旦设过宽度，
 			// 下一次定位会把上次的值再读回来，越放越宽。国家码多选需要两列，
 			// 至少 240px；节点多选至少 170px。
-			const cssMin = list.classList.contains('country-picker') ? 240 : 170;
+			const cssMin = details.classList.contains('country-picker') ? 240 : 170;
 			const width = Math.min(Math.max(cssMin, Math.round(rect.width)),
 				vw - margin * 2);
 			const natural = Math.min(list.scrollHeight + 2, 190);
