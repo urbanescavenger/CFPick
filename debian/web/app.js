@@ -190,8 +190,12 @@
 			? '已运行 ' + fmtDuration(status.elapsed) + (status.stop_requested ? ' · 正在停止' : '')
 			: (status.last && status.last.finished_at ? '上次完成于 ' + new Date(status.last.finished_at * 1000).toLocaleString() : '—'));
 
+		// 已请求停止时按钮也要失效并显示「停止中…」，避免重复点。
+		const stopping = running && !!status.stop_requested;
+		const stopButton = $('#btn-stop');
 		$('#btn-start').disabled = running;
-		$('#btn-stop').disabled = !running;
+		stopButton.disabled = !running || stopping;
+		stopButton.textContent = stopping ? '停止中…' : '停止';
 		$('#btn-retest').disabled = running;
 
 		if (status.core) renderActiveCore(status.core);
