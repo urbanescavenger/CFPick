@@ -43,15 +43,25 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Current Makefile Version: ${version}"
 
-      - name: Resolve latest snapshot SDK URL
+      - name: Resolve stable APK SDK URL
         id: snapsdk
         continue-on-error: true
         run: |
-          base="https://downloads.openwrt.org/snapshots/targets/x86/64/"
-          file="$(curl --http1.1 -sSLk --retry 3 --retry-all-errors "$base" | grep -oE 'openwrt-sdk-x86-64_[A-Za-z0-9._-]+\.tar\.zst' | head -n1)"
-          # 解析失败不阻断：下载步骤会按各镜像目录自行找文件名；APK 只是可选产物。
-          echo "url=${base}${file}" >> "$GITHUB_OUTPUT"
-          echo "Resolved snapshot SDK: ${base}${file}"
+          # APK 构建用稳定版 SDK（25.12.x），不用每日快照：快照文件名每天变、
+          # 镜像同步慢，曾把整个 job 拖到 120 分钟超时且没发出包。
+          base="https://downloads.openwrt.org/releases/"
+          ver="$(curl --http1.1 -fsSLk --connect-timeout 20 --max-time 90 \
+              --retry 2 --retry-all-errors "$base" 2>/dev/null \
+              | grep -oE '25\.12\.[0-9]+' | sort -V | tail -n1)"
+          [ -n "$ver" ] || ver="25.12.6"
+          dir="${base}${ver}/targets/x86/64/"
+          file="$(curl --http1.1 -fsSLk --connect-timeout 20 --max-time 90 \
+              --retry 2 --retry-all-errors "$dir" 2>/dev/null \
+              | grep -oE "openwrt-sdk-${ver}-x86-64_[A-Za-z0-9._-]+\.tar\.zst" | head -n1)"
+          [ -n "$file" ] || file="openwrt-sdk-${ver}-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
+          # 解析失败不阻断：APK 只是可选产物，IPK 已先构建。
+          echo "url=${dir}${file}" >> "$GITHUB_OUTPUT"
+          echo "Resolved stable APK SDK: ${dir}${file}"
 
       - name: Install system dependencies & po2lmo
         run: |
@@ -99,38 +109,32 @@ jobs:
           make defconfig
           make package/${PKG}/compile V=99
 
-      # Snapshot SDK 是 APK（25.x/主干）构建所需的，体积大且镜像不稳；
-      # 失败/超时只跳过 APK，IPK 仍然照常打包发布。
-      - name: Download Snapshot OpenWrt SDK
+      # 稳定版 25.12 SDK（APK 构建用）：URL 固定、官方与镜像都有，不再依赖
+      # 每日快照。失败/超时只跳过 APK，IPK 仍然照常打包发布。
+      - name: Download Stable OpenWrt SDK (APK)
         id: snapsecdk
         continue-on-error: true
-        timeout-minutes: 70
+        timeout-minutes: 40
         run: |
           mkdir -p /tmp/SNAPSDK
           url="${{ steps.snapsdk.outputs.url }}"
-          official="${url##*/}"
+          file="${url##*/}"
+          [ -n "$file" ] || { echo "没有解析到稳定版 SDK，跳过 APK"; exit 1; }
+          rel="${url#https://downloads.openwrt.org/releases}"
           ok=false
           for base in \
-            "https://downloads.openwrt.org/snapshots/targets/x86/64" \
-            "https://mirrors.ustc.edu.cn/openwrt/snapshots/targets/x86/64"; do
-            # 快照每日重建，各镜像同步有延迟：优先用镜像目录里的最新文件名。
-            mfile="$(curl --http1.1 -fsSLk --connect-timeout 20 --max-time 90 \
-                --retry 2 --retry-all-errors "$base/" 2>/dev/null \
-                | grep -oE 'openwrt-sdk-x86-64_[A-Za-z0-9._-]+\.tar\.zst' | head -n1)"
-            [ -n "$mfile" ] || mfile="$official"
-            echo "镜像: $base/$mfile"
-            if [ -f /tmp/SNAPSDK/.name ] && [ "$(cat /tmp/SNAPSDK/.name)" != "$mfile" ]; then
-              rm -f /tmp/SNAPSDK.tar.zst
-            fi
-            echo "$mfile" > /tmp/SNAPSDK/.name
+            "https://downloads.openwrt.org/releases" \
+            "https://mirrors.ustc.edu.cn/openwrt/releases"; do
+            murl="${base}${rel}"
+            echo "镜像: $murl"
             # 显式续传循环：--retry 不会重新计算 -C - 的断点，断流后必须启动
             # 新的 curl 进程才会按当前文件大小续传。
             attempt=0
-            while [ "$attempt" -lt 12 ]; do
+            while [ "$attempt" -lt 8 ]; do
               attempt=$((attempt + 1))
               if curl --http1.1 -fSLk -C - --connect-timeout 30 \
                   --max-time 900 --speed-limit 10240 --speed-time 60 \
-                  "$base/$mfile" -o /tmp/SNAPSDK.tar.zst; then
+                  "$murl" -o /tmp/SNAPSDK.tar.zst; then
                 break
               fi
               # 可能已经下完整（服务端返回 416），先校验再决定是否继续。
@@ -147,19 +151,19 @@ jobs:
             echo "镜像失败，换下一个: $base"
           done
           if [ "$ok" != "true" ]; then
-            echo "Snapshot SDK 下载失败：本次跳过 APK，继续发布 IPK"
+            echo "稳定版 SDK 下载失败：本次跳过 APK，继续发布 IPK"
             exit 1
           fi
           zstd -d /tmp/SNAPSDK.tar.zst
           tar xf /tmp/SNAPSDK.tar --strip-components=1 -C /tmp/SNAPSDK
 
-      - name: Copy source into Snapshot SDK
+      - name: Copy source into APK SDK
         if: steps.snapsecdk.outcome == 'success'
         run: |
           mkdir -p /tmp/SNAPSDK/package/${PKG}
           rsync -avh --exclude='.git' . /tmp/SNAPSDK/package/${PKG}
 
-      - name: Compile APK with Snapshot SDK
+      - name: Compile APK with Stable SDK
         if: steps.snapsecdk.outcome == 'success'
         run: |
           cd /tmp/SNAPSDK
