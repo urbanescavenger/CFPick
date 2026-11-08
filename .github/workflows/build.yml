@@ -81,16 +81,33 @@ jobs:
           ok=false
           for base in \
             "https://downloads.openwrt.org/snapshots/targets/x86/64" \
-            "https://mirrors.ustc.edu.cn/openwrt/snapshots/targets/x86/64"; do
-            echo "尝试镜像: $base/$file"
-            if curl --http1.1 -SLk -C - --connect-timeout 30 \
+            "https://mirrors.ustc.edu.cn/openwrt/snapshots/targets/x86/64" \
+            "https://mirrors.tuna.tsinghua.edu.cn/openwrt/snapshots/targets/x86/64" \
+            "https://mirror.sjtu.edu.cn/openwrt/snapshots/targets/x86/64" \
+            "https://mirrors.aliyun.com/openwrt/snapshots/targets/x86/64"; do
+            # 快照每日更新，各镜像同步有延迟；每个镜像优先用自己目录里的最新
+            # 文件名，避免官方文件名在镜像上 404。
+            mfile="$(curl --http1.1 -fsSLk --connect-timeout 20 --max-time 60 \
+                --retry 2 --retry-all-errors "$base/" 2>/dev/null \
+                | grep -oE 'openwrt-sdk-x86-64_[A-Za-z0-9._-]+\.tar\.zst' | head -n1)"
+            [ -n "$mfile" ] || mfile="$file"
+            echo "尝试镜像: $base/$mfile"
+            # 换镜像/换文件名时不要续传上一个镜像的半截文件。
+            if [ -f /tmp/SNAPSDK/.name ] && [ "$(cat /tmp/SNAPSDK/.name)" != "$mfile" ]; then
+              rm -f /tmp/SNAPSDK.tar.zst
+            fi
+            echo "$mfile" > /tmp/SNAPSDK/.name
+            # -f：镜像返回 404/5xx 时直接失败，不把错误页当安装包。
+            if curl --http1.1 -fSLk -C - --connect-timeout 30 \
                 --retry 3 --retry-delay 5 --retry-all-errors \
                 --max-time 1800 --speed-limit 10240 --speed-time 60 \
-                "$base/$file" \
-                -o /tmp/SNAPSDK.tar.zst; then
+                "$base/$mfile" \
+                -o /tmp/SNAPSDK.tar.zst \
+                && zstd -t /tmp/SNAPSDK.tar.zst >/dev/null 2>&1; then
               ok=true
               break
             fi
+            rm -f /tmp/SNAPSDK.tar.zst
             echo "镜像失败，换下一个: $base"
           done
           if [ "$ok" != "true" ]; then
