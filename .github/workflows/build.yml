@@ -45,10 +45,11 @@ jobs:
 
       - name: Resolve latest snapshot SDK URL
         id: snapsdk
+        continue-on-error: true
         run: |
           base="https://downloads.openwrt.org/snapshots/targets/x86/64/"
           file="$(curl --http1.1 -sSLk --retry 3 --retry-all-errors "$base" | grep -oE 'openwrt-sdk-x86-64_[A-Za-z0-9._-]+\.tar\.zst' | head -n1)"
-          [ -n "$file" ] || { echo "No snapshot SDK found at $base"; exit 1; }
+          # 解析失败不阻断：下载步骤会按各镜像目录自行找文件名；APK 只是可选产物。
           echo "url=${base}${file}" >> "$GITHUB_OUTPUT"
           echo "Resolved snapshot SDK: ${base}${file}"
 
@@ -73,50 +74,6 @@ jobs:
             -o /tmp/SDK.tar.xz
           tar xf /tmp/SDK.tar.xz --strip-components=1 -C /tmp/SDK
 
-      - name: Download Snapshot OpenWrt SDK
-        run: |
-          mkdir -p /tmp/SNAPSDK
-          url="${{ steps.snapsdk.outputs.url }}"
-          file="${url##*/}"
-          ok=false
-          for base in \
-            "https://downloads.openwrt.org/snapshots/targets/x86/64" \
-            "https://mirrors.ustc.edu.cn/openwrt/snapshots/targets/x86/64" \
-            "https://mirrors.tuna.tsinghua.edu.cn/openwrt/snapshots/targets/x86/64" \
-            "https://mirror.sjtu.edu.cn/openwrt/snapshots/targets/x86/64" \
-            "https://mirrors.aliyun.com/openwrt/snapshots/targets/x86/64"; do
-            # 快照每日更新，各镜像同步有延迟；每个镜像优先用自己目录里的最新
-            # 文件名，避免官方文件名在镜像上 404。
-            mfile="$(curl --http1.1 -fsSLk --connect-timeout 20 --max-time 60 \
-                --retry 2 --retry-all-errors "$base/" 2>/dev/null \
-                | grep -oE 'openwrt-sdk-x86-64_[A-Za-z0-9._-]+\.tar\.zst' | head -n1)"
-            [ -n "$mfile" ] || mfile="$file"
-            echo "尝试镜像: $base/$mfile"
-            # 换镜像/换文件名时不要续传上一个镜像的半截文件。
-            if [ -f /tmp/SNAPSDK/.name ] && [ "$(cat /tmp/SNAPSDK/.name)" != "$mfile" ]; then
-              rm -f /tmp/SNAPSDK.tar.zst
-            fi
-            echo "$mfile" > /tmp/SNAPSDK/.name
-            # -f：镜像返回 404/5xx 时直接失败，不把错误页当安装包。
-            if curl --http1.1 -fSLk -C - --connect-timeout 30 \
-                --retry 3 --retry-delay 5 --retry-all-errors \
-                --max-time 1800 --speed-limit 10240 --speed-time 60 \
-                "$base/$mfile" \
-                -o /tmp/SNAPSDK.tar.zst \
-                && zstd -t /tmp/SNAPSDK.tar.zst >/dev/null 2>&1; then
-              ok=true
-              break
-            fi
-            rm -f /tmp/SNAPSDK.tar.zst
-            echo "镜像失败，换下一个: $base"
-          done
-          if [ "$ok" != "true" ]; then
-            echo "所有镜像都下载失败"
-            exit 1
-          fi
-          zstd -d /tmp/SNAPSDK.tar.zst
-          tar xf /tmp/SNAPSDK.tar --strip-components=1 -C /tmp/SNAPSDK
-
       # The package Makefile copies debian/ into PKG_BUILD_DIR via a
       # Build/Prepare hook.  Stage it into ./root as well: this keeps the
       # package correct even if an older luci.mk does not expand the hook,
@@ -126,13 +83,13 @@ jobs:
           mkdir -p root/usr/lib/cfpick
           cp -R debian/cfpick debian/data root/usr/lib/cfpick/
 
-      - name: Copy source into SDKs
+      - name: Copy source into Legacy SDK
         run: |
           mkdir -p /tmp/SDK/package/${PKG}
-          mkdir -p /tmp/SNAPSDK/package/${PKG}
           rsync -avh --exclude='.git' . /tmp/SDK/package/${PKG}
-          rsync -avh --exclude='.git' . /tmp/SNAPSDK/package/${PKG}
 
+      # IPK/opkg（OpenWrt 24.10 及更早）先构建：这是绝大多数路由器的实际需求，
+      # 不能被后面快照 SDK 的下载问题拖垮。
       - name: Compile IPK with Legacy SDK
         run: |
           cd /tmp/SDK
@@ -142,7 +99,68 @@ jobs:
           make defconfig
           make package/${PKG}/compile V=99
 
+      # Snapshot SDK 是 APK（25.x/主干）构建所需的，体积大且镜像不稳；
+      # 失败/超时只跳过 APK，IPK 仍然照常打包发布。
+      - name: Download Snapshot OpenWrt SDK
+        id: snapsecdk
+        continue-on-error: true
+        timeout-minutes: 70
+        run: |
+          mkdir -p /tmp/SNAPSDK
+          url="${{ steps.snapsdk.outputs.url }}"
+          official="${url##*/}"
+          ok=false
+          for base in \
+            "https://downloads.openwrt.org/snapshots/targets/x86/64" \
+            "https://mirrors.ustc.edu.cn/openwrt/snapshots/targets/x86/64"; do
+            # 快照每日重建，各镜像同步有延迟：优先用镜像目录里的最新文件名。
+            mfile="$(curl --http1.1 -fsSLk --connect-timeout 20 --max-time 90 \
+                --retry 2 --retry-all-errors "$base/" 2>/dev/null \
+                | grep -oE 'openwrt-sdk-x86-64_[A-Za-z0-9._-]+\.tar\.zst' | head -n1)"
+            [ -n "$mfile" ] || mfile="$official"
+            echo "镜像: $base/$mfile"
+            if [ -f /tmp/SNAPSDK/.name ] && [ "$(cat /tmp/SNAPSDK/.name)" != "$mfile" ]; then
+              rm -f /tmp/SNAPSDK.tar.zst
+            fi
+            echo "$mfile" > /tmp/SNAPSDK/.name
+            # 显式续传循环：--retry 不会重新计算 -C - 的断点，断流后必须启动
+            # 新的 curl 进程才会按当前文件大小续传。
+            attempt=0
+            while [ "$attempt" -lt 12 ]; do
+              attempt=$((attempt + 1))
+              if curl --http1.1 -fSLk -C - --connect-timeout 30 \
+                  --max-time 900 --speed-limit 10240 --speed-time 60 \
+                  "$base/$mfile" -o /tmp/SNAPSDK.tar.zst; then
+                break
+              fi
+              # 可能已经下完整（服务端返回 416），先校验再决定是否继续。
+              if zstd -t /tmp/SNAPSDK.tar.zst >/dev/null 2>&1; then
+                break
+              fi
+              echo "第 ${attempt} 次中断，5s 后续传（已有 $(stat -c%s /tmp/SNAPSDK.tar.zst 2>/dev/null || echo 0) 字节）"
+              sleep 5
+            done
+            if zstd -t /tmp/SNAPSDK.tar.zst >/dev/null 2>&1; then
+              ok=true
+              break
+            fi
+            echo "镜像失败，换下一个: $base"
+          done
+          if [ "$ok" != "true" ]; then
+            echo "Snapshot SDK 下载失败：本次跳过 APK，继续发布 IPK"
+            exit 1
+          fi
+          zstd -d /tmp/SNAPSDK.tar.zst
+          tar xf /tmp/SNAPSDK.tar --strip-components=1 -C /tmp/SNAPSDK
+
+      - name: Copy source into Snapshot SDK
+        if: steps.snapsecdk.outcome == 'success'
+        run: |
+          mkdir -p /tmp/SNAPSDK/package/${PKG}
+          rsync -avh --exclude='.git' . /tmp/SNAPSDK/package/${PKG}
+
       - name: Compile APK with Snapshot SDK
+        if: steps.snapsecdk.outcome == 'success'
         run: |
           cd /tmp/SNAPSDK
           ./scripts/feeds update -a
@@ -155,7 +173,9 @@ jobs:
         run: |
           mkdir -p artifacts
           cp /tmp/SDK/bin/packages/x86_64/base/luci-*_all.ipk "./artifacts/"
-          cp /tmp/SNAPSDK/bin/packages/x86_64/base/luci-*.apk "./artifacts/"
+          if [ -d /tmp/SNAPSDK/bin/packages/x86_64/base ]; then
+            cp /tmp/SNAPSDK/bin/packages/x86_64/base/luci-*.apk "./artifacts/" || true
+          fi
           echo "v${{ steps.get_version.outputs.version }}" > artifacts/version.txt
 
       - name: Verify standalone engine is packaged
