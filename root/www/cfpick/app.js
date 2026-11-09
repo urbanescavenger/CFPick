@@ -1372,9 +1372,11 @@
 		// an empty array explicitly clears them (= all nodes).
 		if (nodes != null) body.nodes = nodes;
 		try {
-			const data = await api('/api/cron/task/save', { method: 'POST', body: body });
-			state.tasks = data;
-			renderTasks();
+			// 写操作的 RPC 返回的是原始 ubus 信封（entries），不是翻译后的
+			// {tasks} 结构；直接赋给 state.tasks 会把表格渲染成空。重新读取
+			// /api/cron 保证两张任务表立即显示最新内容。
+			await api('/api/cron/task/save', { method: 'POST', body: body });
+			await refreshCronTasks();
 			toast(enabled ? '定时任务已保存并启用' : '定时任务已保存并停用');
 		} catch (e) {
 			toast(e.message, true);
@@ -1386,11 +1388,11 @@
 		if (!confirm('删除定时任务？\n\n' + (entry.schedule || '') + ' ' + (entry.command || '')))
 			return;
 		try {
-			state.tasks = await api('/api/cron/task/delete', {
+			await api('/api/cron/task/delete', {
 				method: 'POST',
 				body: { source: entry.source, line: entry.line },
 			});
-			renderTasks();
+			await refreshCronTasks();
 			toast('定时任务已删除');
 		} catch (e) {
 			toast(e.message, true);
@@ -1410,7 +1412,7 @@
 			return;
 		}
 		try {
-			state.tasks = await api('/api/cron/task/add', {
+			await api('/api/cron/task/add', {
 				method: 'POST',
 				body: {
 					schedule: schedule,
@@ -1418,7 +1420,7 @@
 					nodes: nodes,
 				},
 			});
-			renderTasks();
+			await refreshCronTasks();
 			toast('定时任务已添加');
 		} catch (e) {
 			toast(e.message, true);

@@ -418,12 +418,12 @@ function node_latency_max(){
     echo "$_v"
 }
 
-# 任务日志里的节点显示名：备注名(ID)，没有备注名时只显示 ID。只读，可在 $() 内调用。
+# 任务日志里的节点显示名：只显示备注名，没有备注名时回退 ID。只读，可在 $() 内调用。
 function node_label(){
     local _id="$1" _name
     _name="$(uci -q get "passwall.${_id}.remarks" 2>/dev/null)"
     if [ -n "$_name" ] && [ "$_name" != "$_id" ]; then
-        printf '%s(%s)' "$_name" "$_id"
+        printf '%s' "$_name"
     else
         printf '%s' "$_id"
     fi
