@@ -22,6 +22,13 @@ name: oci-arm-resize
 #   - workflow_dispatch：默认 dry_run=true，只打印当前规格和候选，不改实例。
 #   - schedule：每 6 小时 watchdog；需要 repo variable OCI_RESIZE_ENABLED=true。
 #   - self-chain 用 workflow_dispatch，不受该变量限制；要停就 disable workflow。
+#   - chain 是内部参数，self-chain 会传 true，用来区分「人工手动触发」。
+#
+# 通知策略（NOTIFY_WEBHOOK_URL）：
+#   - 成功类通知每次都发：扩到 4C24G、中间步扩容成功、发现已是 4C24G。
+#   - 启动/进度心跳最多每 7 天一条：手动 workflow_dispatch 除外（总是发一条，
+#     方便测 webhook）。上次心跳时间存在 actions cache（.oci-notify-state），
+#     schedule watchdog 与 self-chain 的所有 run 共享同一份状态。
 #
 # 可选：添加 OCI_INSTANCE_ID secret 直接指定实例，避免按 display-name 查找。
 
@@ -42,6 +49,10 @@ on:
           - memory_first
           - full_only
         default: cpu_first
+      chain:
+        description: "内部：由上一轮 self-chain 触发，不计为手动触发"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -101,12 +112,23 @@ jobs:
           oci iam region list --output table > /dev/null
           echo "OCI CLI OK"
 
+      # 上一次心跳通知的时间戳跨 run 保存；self-chain / schedule 都能读到。
+      - name: Restore notification state
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          path: .oci-notify-state
+          key: oci-arm-resize-notify-${{ github.run_id }}
+          restore-keys: |
+            oci-arm-resize-notify-
+
       - name: Retry loop
         id: loop
         env:
           COMPARTMENT: ${{ secrets.OCI_COMPARTMENT }}
           INSTANCE_ID_SECRET: ${{ secrets.OCI_INSTANCE_ID }}
           DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.chain != 'true' && 'true' || 'false' }}
           FULL_OCPUS: ${{ env.FULL_OCPUS }}
           FULL_MEMORY_GBS: ${{ env.FULL_MEMORY_GBS }}
           CPU_STEP_OCPUS: ${{ env.CPU_STEP_OCPUS }}
@@ -120,6 +142,9 @@ jobs:
           NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
         run: |
           set -euo pipefail
+
+          STATE_DIR="$GITHUB_WORKSPACE/.oci-notify-state"
+          mkdir -p "$STATE_DIR"
 
           notify() {
             local message="$1"
@@ -137,7 +162,36 @@ jobs:
               || echo "::warning::notification send failed"
           }
 
-          notify "OCI resize 新一轮开始（run $GITHUB_RUN_ID，偏好 $PREFERENCE）" "CFPick OCI"
+          mark_notified() {
+            if [ -n "${NOTIFY_WEBHOOK_URL:-}" ]; then
+              mkdir -p "$STATE_DIR"
+              date +%s > "$STATE_DIR/last"
+            fi
+          }
+
+          # 成功类通知：每次都发。
+          notify_always() {
+            notify "$1" "${2:-CFPick OCI}"
+            mark_notified
+          }
+
+          # 启动/进度心跳：手动触发总是发，其余最多每 7 天一条。
+          notify_heartbeat() {
+            local now last age
+            now=$(date +%s)
+            last=$(cat "$STATE_DIR/last" 2>/dev/null || echo 0)
+            case "$last" in ''|*[!0-9]*) last=0 ;; esac
+            age=$(( now - last ))
+            if [ "$MANUAL" = "true" ] || [ "$age" -ge 604800 ]; then
+              echo "发送心跳通知（距上次 ${age}s）"
+              notify "$1" "CFPick OCI"
+              mark_notified
+              # 手动触发的“总是通知”只生效一次，避免每轮循环都刷屏。
+              MANUAL=false
+            else
+              echo "跳过心跳通知（距上次 ${age}s，未满 7 天）"
+            fi
+          }
 
           deadline=$(( $(date +%s) + 18000 ))   # 5 小时
           attempt=0
@@ -236,7 +290,7 @@ jobs:
 
             if [ "$cur_ocpus" = "$FULL_OCPUS" ] && [ "$cur_mem" = "$FULL_MEMORY_GBS" ]; then
               echo "✅ 已经是 4C24G，停止"
-              notify "✅ 已经是 4C24G（run $GITHUB_RUN_ID），workflow 即将停用" "CFPick OCI"
+              notify_always "✅ 已经是 4C24G（run $GITHUB_RUN_ID），workflow 即将停用" "CFPick OCI"
               stop=true
               break
             fi
@@ -258,6 +312,8 @@ jobs:
               sleep 30
               continue
             fi
+
+            notify_heartbeat "📊 OCI 扩容周报：当前 $shape ${cur_ocpus}C/${cur_mem}G，仍在等待 4C24G 容量（run $GITHUB_RUN_ID）" "CFPick OCI"
 
             build_candidates
             candidate_count=${#cand_ocpus[@]}
@@ -333,11 +389,11 @@ jobs:
                 round_ok=true
                 if [ "$target_ocpus" = "$FULL_OCPUS" ] && [ "$target_mem" = "$FULL_MEMORY_GBS" ]; then
                   echo "✅ 已扩到 4C24G"
-                  notify "✅ 已扩到 4C24G（run $GITHUB_RUN_ID），workflow 即将停用" "CFPick OCI"
+                  notify_always "✅ 已扩到 4C24G（run $GITHUB_RUN_ID），workflow 即将停用" "CFPick OCI"
                   stop=true
                 else
                   echo "✅ 中间步 $target_label 成功，立即进入下一轮继续冲 4C24G"
-                  notify "分步扩容成功：$target_label；继续冲 4C24G（run $GITHUB_RUN_ID）" "CFPick OCI"
+                  notify_always "分步扩容成功：$target_label；继续冲 4C24G（run $GITHUB_RUN_ID）" "CFPick OCI"
                 fi
                 break
               fi
@@ -373,6 +429,14 @@ jobs:
             echo "chain=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Save notification state
+        if: always()
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: .oci-notify-state
+          key: oci-arm-resize-notify-${{ github.run_id }}
+
       - name: Disable workflow on success
         if: steps.loop.outputs.stop == 'true'
         env:
@@ -389,4 +453,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
             -f dry_run=false \
+            -f chain=true \
             -f step_preference="$PREFERENCE"
