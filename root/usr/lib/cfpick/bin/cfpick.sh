@@ -700,7 +700,7 @@ monitor_worker() {
     local _port=$((MONITOR_PORT_BASE + ($$ % 4000)))
 
     echolog "监测 [$(node_label "$_node")] 开始：每 ${_iv}s 复测一次成功结果，连续 ${_max} 次失败触发复测"
-    local _fails=0 _domain _ip _target _ok _lat _elapsed _stop=0 _last_sig="" _sig
+    local _fails=0 _domain _ip _target _result_ip _ok _lat _elapsed _stop=0 _last_sig="" _sig
     while :; do
         read_config
         case "${monitor_enabled:-1}" in
@@ -725,6 +725,18 @@ monitor_worker() {
         if [ -n "$_domain" ]; then
             _ip="$(retest_resolve_host "$_domain" | head -n1)"
             _target="$_domain"
+            # DDNS 刚更新时本机 DNS 常有负缓存/延迟：域名解析为空或仍指向旧 IP
+            # 时不能当成节点失败，否则 monitor 每分钟触发复测形成死循环。
+            # 先测已发布的最优 IP，等域名解析追上来再切回域名。
+            _result_ip="$(monitor_result_ip "$_node")"
+            if [ -n "$_result_ip" ] && [ "$_ip" != "$_result_ip" ]; then
+                if [ -z "$_ip" ]; then
+                    echolog "监测 [$(node_label "$_node")] ${_domain} 暂未解析，先测已发布的最优 IP ${_result_ip}"
+                else
+                    echolog "监测 [$(node_label "$_node")] ${_domain} 解析为 ${_ip}，与最新结果 ${_result_ip} 不一致，先测已发布的最优 IP"
+                fi
+                _ip="$_result_ip"
+            fi
         else
             _ip="$(monitor_result_ip "$_node")"
             _target="$_ip"
