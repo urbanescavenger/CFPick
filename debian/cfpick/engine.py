@@ -59,6 +59,10 @@ class Engine:
         # Nodes that produced at least one fresh passing candidate in this
         # session.  A run that only carried previous rows is not a success.
         self.fresh_nodes = set()
+        # Diagnostic for the last download attempt (curl rc / HTTP code /
+        # bytes / average speed) so a failed IP's log line says why.  The
+        # download stage is serial, so one slot is enough.
+        self._dl_diag = ""
         # Empty means "every enabled node"; otherwise only these names run.
         self.node_names = [str(name).strip() for name in (node_names or [])
                            if str(name).strip()]
@@ -538,11 +542,13 @@ class Engine:
         """Return speed in MB/s (0 on failure)."""
         process = config_path = None
         port = 0
+        self._dl_diag = ""
         try:
             try:
                 process, config_path, port = self._start_candidate_core(
                     node, ip, tag)
             except (core.CoreError, EngineError) as exc:
+                self._dl_diag = "core-start-failed"
                 self.log.log("下载测速核心启动失败: %s" % exc)
                 return 0.0
 
@@ -567,9 +573,16 @@ class Engine:
                     rc, out = self._curl(args, self.cfg["download_time"] + 10)
                     if rc != 7:
                         break
+            parts = out.split()
+            if len(parts) >= 3:
+                # Keep the raw numbers before any acceptance check: this is
+                # what tells an HTTP 403/429 from a TLS/reset failure.
+                self._dl_diag = "rc=%d http=%s bytes=%s speed=%s" % (
+                    rc, parts[0], parts[1], parts[2])
+            else:
+                self._dl_diag = "rc=%d no-output" % rc
             if rc not in (0, 28):
                 return 0.0
-            parts = out.split()
             if len(parts) < 3:
                 return 0.0
             code, size, speed = parts[0], parts[1], parts[2]
@@ -583,8 +596,8 @@ class Engine:
             if size < 16384 or speed <= 0:
                 return 0.0
             if rc == 28 and speed < DL_FAST_FAIL_BPS:
-                self.log.log("下载测速快速死亡：%s %ds 内不足 %d 字节，判失败" % (
-                    ip, DL_FAST_FAIL_TIME, DL_FAST_FAIL_BYTES))
+                self.log.log("下载测速快速死亡：%s 平均 %.0f 字节/秒（低于 %d 字节/秒 持续 %ds），已下载 %.0f 字节，判失败" % (
+                    ip, speed, DL_FAST_FAIL_BPS, DL_FAST_FAIL_TIME, size))
                 return 0.0
             return round(speed / 1048576.0, 2)
         finally:
@@ -901,8 +914,9 @@ class Engine:
                 self.log.log("下载测速 [%s] %d/%d - %s 速度 %.2f MB/s [保留]" % (
                     node["name"], index, len(tested), row.ip, speed))
             else:
-                self.log.log("下载测速 [%s] %d/%d - %s 下载失败 [丢弃]" % (
-                    node["name"], index, len(tested), row.ip))
+                diag = ("（%s）" % self._dl_diag) if self._dl_diag else ""
+                self.log.log("下载测速 [%s] %d/%d - %s 下载失败 [丢弃]%s" % (
+                    node["name"], index, len(tested), row.ip, diag))
         if kept:
             self.fresh_nodes.add(node["name"])
             out = result.sort_rows(kept, "speed") + rest

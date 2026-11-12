@@ -166,8 +166,8 @@ ubus call cfpick api_tasks
 *   **每 IP 探测次数**：每个 IP 的 curl 探测次数（全部成功才保留）。
 *   **最大并发 worker**：多节点模式的并发上限（0 = 全部）。
 *   **真实下载测速**（`download_test_enabled`，默认开）：延迟初筛后对少量候选实测下载吞吐。
-*   **每 worker 下载测速候选数**（`download_test_count`，默认 5，最多 10）：测每个 worker 延迟最优的前 N 个 IP，并额外保证当前已发布的最优 IP 与每个机房（ASN）至少一个代表进入实测；机房代表放不下时数量按需略超 N（上限仍受候选总数约束）。注意这会真实消耗代理流量：默认 URL 为 10 MB，每 worker 最多约 100 MB，多 worker 串行累加。
-*   **下载测速 URL**（`download_test_url`）：经节点本地 SOCKS 下载的固定大小文件，默认 Cloudflare `speed.cloudflare.com/__down?bytes=10000000`（10 MB）。响应必须是 HTTP 2xx 且至少收到 16 KB。
+*   **每 worker 下载测速候选数**（`download_test_count`，默认 5，最多 10）：测每个 worker 延迟最优的前 N 个 IP，并额外保证当前已发布的最优 IP 与每个机房（ASN）至少一个代表进入实测；机房代表放不下时数量按需略超 N（上限仍受候选总数约束）。注意这会真实消耗代理流量：默认每次 999999 字节（约 1 MB），每 worker 最多约 10 MB，多 worker 串行累加。
+*   **下载测试大小**（`download_test_size`，默认 999999 字节，上限 999999）：下载源固定为 Cloudflare `speed.cloudflare.com/__down?bytes=N`，不再支持自定义链接。Cloudflare 对 `bytes>=10000000` 的请求有未公开限流（HTTP 429，`Retry-After` 可达 1 小时），所以大小硬限制在 999999；工具要求响应为 HTTP 2xx 且至少收到 16 KB。
 *   **下载测速单 IP 时限**（`download_test_time`，默认 10s）：每个 IP 的 curl `--max-time`；被时限截断的部分下载仍按已下载字节计算平均速度。
 *   **限时迭代测速 / 迭代测速时长**：开启后进入计时模式，每个待测节点独立循环收敛（每遍只测上一遍通过的 IP），到点取剩余最优写回；迭代收敛结束后同样对最终通过集中延迟最优的前 N 个 IP 做下载实测。
 
