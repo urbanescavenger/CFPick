@@ -3391,8 +3391,12 @@ node_speed_test() {
             # 不再写回/发 DDNS（否则会把已经失效的旧 IP 重新发布），并返回失败，
             # 让监测链进入第三轮“刷新候选”的正常测试。
             if [ "$_any_fresh" != "1" ]; then
-                echolog "本次没有产出可提交的结果（延迟或下载全部失败），清除本次 worker 的旧结果"
-                clear_result_workers "$NODE_TESTED_WORKERS"
+                if [ "${QUICK_RETEST:-0}" = "1" ]; then
+                    echolog "快速复测没有产出可提交的结果，保留原 result.csv 候选名单"
+                else
+                    echolog "本次没有产出可提交的结果（延迟或下载全部失败），清除本次 worker 的旧结果"
+                    clear_result_workers "$NODE_TESTED_WORKERS"
+                fi
                 rm -f "$merged" "$reapply"
                 trap node_test_cleanup EXIT INT TERM
                 node_test_cleanup; trap - EXIT INT TERM
@@ -3409,7 +3413,9 @@ node_speed_test() {
                 return 1
             fi
             echo "# Speed test time: $(date +'%Y-%m-%d %H:%M:%S')" >> "$merged"
-            append_persistent_history "$merged"
+            # 快速复测的名单只是本轮的临时数组：不写 result.csv / 不追加历史，
+            # 测完即随 $merged 删除，原候选名单原封不动留给随后的正常复测。
+            [ "${QUICK_RETEST:-0}" != "1" ] && append_persistent_history "$merged"
             # ── 写回配置 → 重启生效 → 发布结果 ──
             # 顺序固定：先把配置写全（原子替换 + 读回校验），再 restart 让运行时生效，最后才发布
             # result.csv —— 保证「UI 看到新结果」就一定意味着「各节点已拿到自己的最优 IP」。
@@ -3438,8 +3444,10 @@ node_speed_test() {
             # 全量任务才滚动历史；局部任务只替换自己 worker 的行，避免把别的 worker 的结果滚进 .1。
             # 只有本次真正覆盖了全部 worker 才滚动历史；被占用的 worker 跳过后
             # 结果是局部的，滚动会把上一次的完整结果挪进 .1。
-            [ "$RUN_IS_FULL" = "1" ] && rotate_result_files
-            if ! merge_run_result "$merged" "$NODE_TESTED_WORKERS"; then
+            [ "$RUN_IS_FULL" = "1" ] && [ "${QUICK_RETEST:-0}" != "1" ] && rotate_result_files
+            if [ "${QUICK_RETEST:-0}" = "1" ]; then
+                echolog "快速复测：不写入 result.csv，保留原候选名单供随后的正常复测使用"
+            elif ! merge_run_result "$merged" "$NODE_TESTED_WORKERS"; then
                 echolog "警告：合并 result.csv 失败，保留上一次结果"
             fi
             rm -f "$merged"

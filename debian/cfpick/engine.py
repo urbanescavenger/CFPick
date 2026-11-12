@@ -1058,15 +1058,22 @@ class Engine:
 
         merged = result.sort_rows(merged, "speed")
         if not merged:
-            # Nothing usable this run: remove the tested nodes' old rows (keep
-            # other nodes), do not publish them to DDNS, and fail the run so the
-            # monitor chain escalates to the normal-candidate refresh.
             when = result.now_text()
-            combined = result.merge_result([], node_names, node_ids=node_ids)
-            result.write_result(paths.RESULT_FILE, combined, when)
-            if self.cfg.get("export", {}).get("json", True):
-                result.export_json(combined, when)
-            self.log.log("本次没有产出可提交的结果，已清除本次 worker 的旧结果")
+            if self.quick:
+                # The quick pass only owns a temporary candidate array.  Keep
+                # the original result.csv so the following normal retest can
+                # still use the full candidate list.
+                self.log.log("快速复测没有产出可提交的结果，保留原 result.csv 候选名单")
+            else:
+                # Nothing usable this run: remove the tested nodes' old rows
+                # (keep other nodes), do not publish them to DDNS, and fail the
+                # run so the monitor chain escalates to the normal-candidate
+                # refresh.
+                combined = result.merge_result([], node_names, node_ids=node_ids)
+                result.write_result(paths.RESULT_FILE, combined, when)
+                if self.cfg.get("export", {}).get("json", True):
+                    result.export_json(combined, when)
+                self.log.log("本次没有产出可提交的结果，已清除本次 worker 的旧结果")
             lock.write_state(phase="failed", error="本次没有产出可提交的结果")
             self.task_details = [
                 {"node": name, "status": "abnormal", "method": "-"}
@@ -1076,29 +1083,35 @@ class Engine:
         when = result.now_text()
         # Cache the best IPs' ASN now; the API also lazily fills old history.
         asn.backfill_ips([row.ip for row in merged], max_workers=8)
-        result.append_history(merged, when)
-        # Prune against every configured node, not just the nodes this run
-        # touched: a partial run must not erase other nodes' history.
-        configured_ids = [
-            (item.get("id") or config.node_id_for_link(item.get("link")))
-            for item in self.cfg.get("nodes", []) if isinstance(item, dict)
-        ]
-        configured_names = [
-            (item.get("name") or "").strip()
-            for item in self.cfg.get("nodes", []) if isinstance(item, dict)
-        ]
-        result.prune_history(configured_ids, configured_names)
-        # Full runs replace the whole file (and rotate history); partial runs
-        # replace only their own nodes and keep the other nodes' rows.
-        if self.full_run:
-            result.rotate_results()
-        node_names = [node["name"] for node in nodes]
-        combined = result.merge_result(merged, node_names, node_ids=node_ids)
-        if not combined:
+        if self.quick:
+            # The quick pass is a temporary array: do not touch result.csv or
+            # history.  The following normal retest reads the original list.
             combined = merged
-        result.write_result(paths.RESULT_FILE, combined, when)
-        if self.cfg.get("export", {}).get("json", True):
-            result.export_json(combined, when)
+            self.log.log("快速复测：不写入 result.csv，保留原候选名单供随后的正常复测使用")
+        else:
+            result.append_history(merged, when)
+            # Prune against every configured node, not just the nodes this run
+            # touched: a partial run must not erase other nodes' history.
+            configured_ids = [
+                (item.get("id") or config.node_id_for_link(item.get("link")))
+                for item in self.cfg.get("nodes", []) if isinstance(item, dict)
+            ]
+            configured_names = [
+                (item.get("name") or "").strip()
+                for item in self.cfg.get("nodes", []) if isinstance(item, dict)
+            ]
+            result.prune_history(configured_ids, configured_names)
+            # Full runs replace the whole file (and rotate history); partial
+            # runs replace only their own nodes and keep the other nodes' rows.
+            if self.full_run:
+                result.rotate_results()
+            node_names = [node["name"] for node in nodes]
+            combined = result.merge_result(merged, node_names, node_ids=node_ids)
+            if not combined:
+                combined = merged
+            result.write_result(paths.RESULT_FILE, combined, when)
+            if self.cfg.get("export", {}).get("json", True):
+                result.export_json(combined, when)
 
         # DDNS is opt-in and isolated: a DNS failure must never turn a
         # successful speed test into a failed run.
@@ -1158,8 +1171,12 @@ class Engine:
                 "method": method,
             })
         suffix = " %.2f MB/s" % best.speed if best.speed > 0 else ""
-        self.log.log("全部完成，全局最优 IP %s（延迟 %.2fms%s），结果已导出到 %s" % (
-            best.ip, best.latency, suffix, paths.STATE_DIR))
+        if self.quick:
+            self.log.log("快速复测完成（不写 result.csv），最优 IP %s（延迟 %.2fms%s）" % (
+                best.ip, best.latency, suffix))
+        else:
+            self.log.log("全部完成，全局最优 IP %s（延迟 %.2fms%s），结果已导出到 %s" % (
+                best.ip, best.latency, suffix, paths.STATE_DIR))
         return True
 
     # ── entry ───────────────────────────────────────────────────────────
