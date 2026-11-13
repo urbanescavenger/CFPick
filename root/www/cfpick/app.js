@@ -2239,6 +2239,9 @@
 		check('iterate_enabled', g.iterate_enabled);
 		set('iterate_minutes', g.iterate_minutes);
 		set('iterate_converge_count', g.iterate_converge_count);
+		check('monitor_enabled', g.monitor_enabled);
+		set('monitor_interval', g.monitor_interval);
+		set('monitor_failures', g.monitor_failures);
 		check('ddns_enabled', g.ddns_enabled);
 		set('ddns_token', g.ddns_api_token || '');
 		set('ddns_zone_id', g.ddns_zone_id);
@@ -2313,6 +2316,9 @@
 				iterate_enabled: check('iterate_enabled'),
 				iterate_minutes: integer('iterate_minutes', 30, 1, 10080),
 				iterate_converge_count: integer('iterate_converge_count', 5, 1, 3000),
+				monitor_enabled: check('monitor_enabled'),
+				monitor_interval: integer('monitor_interval', 60, 10, 3600),
+				monitor_failures: integer('monitor_failures', 3, 1, 10),
 				ddns_enabled: check('ddns_enabled'),
 				ddns_ip_count: integer('ddns_ip_count', 1, 1, 10),
 				ddns_ttl: integer('ddns_ttl', 300, 1, 86400),

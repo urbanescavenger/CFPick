@@ -311,7 +311,7 @@ cfpick serve              # 前台启动 Web（--listen 0.0.0.0 --port 8787）
 | `iterate_converge_count` | `5` | 迭代收敛阈值：剩余候选 ≤ N 个即停止该节点迭代（1–3000，独立于 `download_count`） |
 | `monitor.enabled` | `true` | 成功后是否派生后台监测：每分钟复测一次成功结果的延迟 |
 | `monitor.interval` | `60` | 监测复测间隔（秒，10–3600） |
-| `monitor.failures` | `1` | 连续失败达到该次数即触发该 worker 的复测（1–10；默认 1 = 一次失败） |
+| `monitor.failures` | `3` | 连续失败达到该次数即触发该 worker 的复测（1–10；默认 3 次） |
 | `nodes` | `[]` | `{name, id, link, ip_list, ddns_domain, enabled}` 数组；`id` 由分享链接（忽略 `#备注`）哈希得到，用于跨改名跟踪历史；`ddns_domain` 可填完整主机名或裸子域名（配合 `zone_name`），留空表示该节点只测速 |
 | `ddns.enabled` | `false` | 是否启用 Cloudflare DDNS 写回 |
 | `ddns.provider` | `cloudflare` | 目前仅支持 Cloudflare |
