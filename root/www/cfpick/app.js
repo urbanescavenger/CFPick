@@ -1411,9 +1411,9 @@
 		renderNodes();
 	}
 
-	function fillNodeSelects(testValue, stableValue) {
+	function fillNodeSelects(testValue) {
 		const nodes = providerNodes('passwall');
-		[['cfg-test-node', testValue], ['cfg-stable-node', stableValue]].forEach(([id, value]) => {
+		[['cfg-test-node', testValue]].forEach(([id, value]) => {
 			const select = $('#' + id);
 			if (!select) return;
 			select.replaceChildren();
@@ -1456,7 +1456,7 @@
 
 	function applyNodeSources() {
 		const g = (state.config && state.config.global) || {};
-		fillNodeSelects(g.node_test_node || '', g.stable_node || '');
+		fillNodeSelects(g.node_test_node || '');
 		renderNodes();
 		fillThirdParty();
 		if (state.tasks) renderTasks();
@@ -2269,10 +2269,6 @@
 		};
 		const integer = (id, fallback, min, max) => Math.round(number(id, fallback, min, max));
 
-		// 测速已与 PassWall 脱钩（一律走独立内核），稳定节点不再必需；
-		// 仍保留该字段供旧配置回显，留空也能保存。
-		const stableNode = text('cfg-stable-node');
-
 		// Scheduled tasks are ordinary crontab lines now.  The UCI cron fields
 		// below are legacy (kept so old configs round-trip); they no longer
 		// generate or own any task.
@@ -2328,7 +2324,6 @@
 				custom_cron: cron,
 				hour: parseInt(g.hour, 10) || 24,
 				node_test_node: text('cfg-test-node'),
-				stable_node: stableNode,
 				web_bind: text('web_listen') || '0.0.0.0',
 				web_port: integer('web_port', 17544, 1, 65535),
 			},

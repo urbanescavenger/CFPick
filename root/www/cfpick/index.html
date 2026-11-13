@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg?v=1.0.12">
 <link rel="icon" href="favicon.ico?v=1.0.12" sizes="any">
 <meta name="theme-color" content="#2563eb">
-<link rel="stylesheet" href="style.css?v=1.0.32">
+<link rel="stylesheet" href="style.css?v=1.0.33">
 </head>
 <body>
 <header class="topbar">
@@ -184,9 +184,8 @@
         「IP 列表」留空使用第一个启用的列表；填写「DDNS 域名」的 worker 只把最优 IP 写到 Cloudflare DNS，
         留空则照旧写回 PassWall 节点。没有 worker 时使用下面的「单节点测速」。
       </p>
-      <div class="grid three">
+      <div class="grid">
         <label>单节点测速（无 worker 时使用） <select id="cfg-test-node"></select></label>
-        <label>稳定节点（旧版，已不使用） <select id="cfg-stable-node"></select></label>
       </div>
       <div class="table-wrap">
         <table class="data nodes-table workers-table">
@@ -280,7 +279,7 @@
           <label class="check"><input id="download_enabled" type="checkbox"> 启用下载实测</label>
           <label>每节点候选数（最多 10） <input id="download_count" type="number" min="1" max="10" step="1"></label>
           <label>单 IP 时限 (s) <input id="download_time" type="number" min="1" max="60" step="1"></label>
-          <label class="span2">下载大小（字节，16384–999999）
+          <label class="span2">CF 回退下载大小（字节，16384–999999）
             <input id="download_size" type="number" min="16384" max="999999" step="1">
           </label>
         </div>
@@ -628,6 +627,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=1.0.32"></script>
+<script src="app.js?v=1.0.33"></script>
 </body>
 </html>
